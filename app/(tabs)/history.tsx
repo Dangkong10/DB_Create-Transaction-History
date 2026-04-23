@@ -84,9 +84,16 @@ export default function HistoryScreen() {
         createdAt: t.createdAt,
       }));
 
-      // 로컬 데이터가 있으면 우선 표시
-      if (localMapped.length > 0) {
-        setTransactions(localMapped);
+      // id 기준 중복 제거 후 우선 표시
+      const seenIds = new Set<string>();
+      const uniqueLocal = localMapped.filter(t => {
+        if (seenIds.has(t.id)) return false;
+        seenIds.add(t.id);
+        return true;
+      });
+
+      if (uniqueLocal.length > 0) {
+        setTransactions(uniqueLocal);
       }
 
       // 2) 온라인이면 서버에서 최신 데이터 동기화
@@ -116,6 +123,19 @@ export default function HistoryScreen() {
     loadTransactions();
   }, [selectedDate]);
 
+  // 다른 페이지에서 저장/수정/삭제 시 즉시 반영
+  useEffect(() => {
+    const handleChanged = () => loadTransactions();
+    window.addEventListener('transaction:changed', handleChanged);
+    // 탭 전환 시에도 최신 데이터 로드 (web)
+    const handleFocus = () => loadTransactions();
+    window.addEventListener('focus', handleFocus);
+    return () => {
+      window.removeEventListener('transaction:changed', handleChanged);
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, [selectedDate]);
+
   const handleDeleteTransaction = async (id: string) => {
     try {
       await deleteTransaction(id);
@@ -123,6 +143,9 @@ export default function HistoryScreen() {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       }
       showToast("거래 내역이 삭제되었습니다.", "success");
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('transaction:changed'));
+      }
       await loadTransactions();
     } catch (error) {
       console.error("[삭제] 실패:", error);
@@ -148,6 +171,9 @@ export default function HistoryScreen() {
       }
       showToast("거래 내역이 수정되었습니다.", "success");
       setEditingId(null);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('transaction:changed'));
+      }
       await loadTransactions();
     } catch (error) {
       console.error("[수정] 실패:", error);
@@ -257,7 +283,8 @@ export default function HistoryScreen() {
         showToast("내보낼 데이터가 없습니다.", "error");
         return;
       }
-      const ExcelJS = await import("exceljs");
+      const ExcelJSModule: any = await import("exceljs");
+      const ExcelJS = ExcelJSModule.default ?? ExcelJSModule;
       const workbook = new ExcelJS.Workbook();
       const worksheet = workbook.addWorksheet("거래 내역");
       worksheet.columns = [

@@ -13,7 +13,8 @@ import { MaterialIcons } from "@expo/vector-icons";
 import { ScreenContainer } from "@/components/screen-container";
 import { ResponsiveContainer } from "@/components/responsive-container";
 import { useToast } from "@/lib/toast-provider";
-import { getTransactions, type Transaction } from "@/lib/supabase";
+import { type Transaction } from "@/lib/supabase";
+import { pullFromServer, getLocalTransactions } from "@/lib/sync-manager";
 import { loadProducts, loadCustomers } from "@/lib/storage";
 import { searchCustomers } from "@/lib/search-utils";
 import { matchChosung } from "@/lib/hangul-utils";
@@ -35,25 +36,69 @@ export default function ReceiptScreen() {
   const [products, setProducts] = useState<Product[]>([]);
   const [customerQuery, setCustomerQuery] = useState("");
 
-  useEffect(() => {
-    (async () => {
-      try {
-        setIsLoading(true);
-        const [all, loadedCustomers, loadedProducts] = await Promise.all([
-          getTransactions(),
-          loadCustomers(),
-          loadProducts(),
-        ]);
-        setTransactions(all);
-        setCustomers(loadedCustomers);
-        setProducts(loadedProducts);
-      } catch (error) {
-        console.error("거래 내역 조회 실패:", error);
-        showToast("거래 내역을 불러오는데 실패했습니다.", "error");
-      } finally {
-        setIsLoading(false);
+  const loadData = async () => {
+    try {
+      setIsLoading(true);
+
+      // 거래처/제품은 독립적으로 로드 (AsyncStorage, 항상 성공)
+      const [loadedCustomers, loadedProducts] = await Promise.all([
+        loadCustomers(),
+        loadProducts(),
+      ]);
+      setCustomers(loadedCustomers);
+      setProducts(loadedProducts);
+
+      // 1) 로컬 IndexedDB 먼저 표시 (오프라인/세션 만료 시에도 동작)
+      const localAll = await getLocalTransactions();
+      const localMapped: Transaction[] = localAll.map((t) => ({
+        id: t.serverId || `local-${t.localId}`,
+        customerName: t.customerName,
+        productName: t.productName,
+        quantity: t.quantity,
+        unitPrice: t.unitPrice,
+        date: t.date,
+        createdAt: t.createdAt,
+      }));
+      // id 기준 중복 제거
+      const seenIds = new Set<string>();
+      const uniqueLocal = localMapped.filter((t) => {
+        if (seenIds.has(t.id)) return false;
+        seenIds.add(t.id);
+        return true;
+      });
+      setTransactions(uniqueLocal);
+
+      // 2) 온라인이면 서버 동기화 시도 (실패해도 로컬 유지)
+      if (typeof navigator !== "undefined" && navigator.onLine) {
+        try {
+          const serverAll = await pullFromServer();
+          setTransactions(serverAll);
+        } catch (serverErr) {
+          console.warn("서버 동기화 실패, 로컬 데이터 사용:", serverErr);
+        }
       }
-    })();
+    } catch (error) {
+      console.error("거래 내역 조회 실패:", error);
+      showToast("거래 내역을 불러오는데 실패했습니다.", "error");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  // 다른 페이지에서 저장/수정/삭제 시 즉시 반영
+  useEffect(() => {
+    const handleChanged = () => loadData();
+    window.addEventListener('transaction:changed', handleChanged);
+    const handleFocus = () => loadData();
+    window.addEventListener('focus', handleFocus);
+    return () => {
+      window.removeEventListener('transaction:changed', handleChanged);
+      window.removeEventListener('focus', handleFocus);
+    };
   }, []);
 
   // 선택 날짜의 영수증 그룹 (거래처별)
@@ -138,8 +183,9 @@ export default function ReceiptScreen() {
     if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setIsExporting(true);
     try {
-      const products = await loadProducts();
-      const getUnitPrice = (name: string) => products.find((p) => p.name === name)?.unitPrice || 0;
+      const loadedProducts = await loadProducts();
+      const getUnitPrice = (name: string) =>
+        loadedProducts.find((p) => p.name === name)?.unitPrice || 0;
 
       const { openDailySummaryPreview } = await import("@/lib/print-daily-summary");
       await openDailySummaryPreview(transactions as any, selectedDate, getUnitPrice);

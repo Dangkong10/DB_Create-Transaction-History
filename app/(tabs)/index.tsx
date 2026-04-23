@@ -91,6 +91,8 @@ export default function HomeScreen() {
   const scrollViewRef = useRef<ScrollView>(null);
   const itemRefs = useRef<Record<string, View | null>>({});
   const productNameInputRefs = useRef<Record<string, TextInput | null>>({});
+  // 중복 제출 방지용 동기식 락 (state는 비동기라 빠른 더블클릭 방지 못 함)
+  const isSubmittingRef = useRef(false);
 
   // 모바일 키보드 대응: 포커스 시 해당 입력 필드를 화면 중앙으로 스크롤
   const handleInputFocus = (event: any) => {
@@ -256,16 +258,18 @@ export default function HomeScreen() {
 
   async function handleSubmit() {
     console.log("[handleSubmit] 저장 버튼 클릭됨");
-    
-    // 저장 중이면 중복 클릭 방지
-    if (isSubmitting) {
+
+    // 저장 중이면 중복 클릭 방지 (ref는 동기식 — 빠른 더블클릭도 차단)
+    if (isSubmittingRef.current) {
       console.log("[handleSubmit] 저장 중이므로 중복 클릭 방지");
       return;
     }
-    
+    isSubmittingRef.current = true;
+
     // 유효성 검사
     if (!selectedCustomer) {
       console.log("[handleSubmit] 검증 실패: 거래처 선택 안됨");
+      isSubmittingRef.current = false;
       showToast("거래처를 선택해주세요.", "error");
       return;
     }
@@ -273,6 +277,7 @@ export default function HomeScreen() {
     const hasEmptyProduct = items.some((item) => !item.productName.trim());
     if (hasEmptyProduct) {
       console.log("[handleSubmit] 검증 실패: 품목명 비어있음");
+      isSubmittingRef.current = false;
       showToast("모든 품목명을 입력해주세요.", "error");
       return;
     }
@@ -280,6 +285,7 @@ export default function HomeScreen() {
     const hasInvalidQuantity = items.some((item) => item.quantity <= 0);
     if (hasInvalidQuantity) {
       console.log("[handleSubmit] 검증 실패: 수량 0 이하");
+      isSubmittingRef.current = false;
       showToast("수량은 1 이상이어야 합니다.", "error");
       return;
     }
@@ -307,7 +313,12 @@ export default function HomeScreen() {
       console.log("로컬 저장 완료 (동기화 대기열 추가됨)");
 
       console.log("[handleSubmit] 저장 성공!");
-      
+
+      // 다른 페이지에 즉시 반영 이벤트 발행
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('transaction:changed'));
+      }
+
       // 성공 피드백
       if (Platform.OS !== "web") {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -332,6 +343,7 @@ export default function HomeScreen() {
       showToast("저장에 실패했습니다. 다시 시도해주세요.", "error");
     } finally {
       setIsSubmitting(false);
+      isSubmittingRef.current = false;
     }
   }
 
@@ -490,29 +502,55 @@ export default function HomeScreen() {
                 거래처 이름
               </Text>
             </TouchableOpacity>
-            <TextInput
-              ref={customerInputRef}
-              value={customerQuery}
-              onChangeText={setCustomerQuery}
-              placeholder="거래처 이름 또는 초성 입력 (예: ㅎㅂ)"
-              placeholderTextColor="#666666"
-              className="text-foreground text-xl"
-              style={{
-                fontSize: 20,
-                backgroundColor: '#ffffff',
-                borderRadius: 14,
-                paddingHorizontal: 20,
-                paddingVertical: 16,
-                borderColor: customerError ? '#e74c3c' : '#e0e0e0',
-                borderWidth: customerError ? 2 : 1,
-                ...(Platform.OS === 'web'
-                  ? { boxShadow: '0 2px 12px rgba(0,0,0,0.06)' } as any
-                  : { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 12, elevation: 3 }),
-              }}
-              autoCapitalize="none"
-              autoCorrect={false}
-              onFocus={handleInputFocus}
-            />
+            <View style={{ position: 'relative' }}>
+              <TextInput
+                ref={customerInputRef}
+                value={customerQuery}
+                onChangeText={setCustomerQuery}
+                placeholder="거래처 이름 또는 초성 입력 (예: ㅎㅂ)"
+                placeholderTextColor="#666666"
+                className="text-foreground text-xl"
+                style={{
+                  fontSize: 20,
+                  backgroundColor: '#ffffff',
+                  borderRadius: 14,
+                  paddingHorizontal: 20,
+                  paddingRight: customerQuery ? 48 : 20,
+                  paddingVertical: 16,
+                  borderColor: customerError ? '#e74c3c' : '#e0e0e0',
+                  borderWidth: customerError ? 2 : 1,
+                  ...(Platform.OS === 'web'
+                    ? { boxShadow: '0 2px 12px rgba(0,0,0,0.06)' } as any
+                    : { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 12, elevation: 3 }),
+                }}
+                autoCapitalize="none"
+                autoCorrect={false}
+                onFocus={handleInputFocus}
+              />
+              {customerQuery.length > 0 && (
+                <TouchableOpacity
+                  onPress={() => {
+                    setCustomerQuery("");
+                    setSelectedCustomer(null);
+                    customerInputRef.current?.focus();
+                  }}
+                  activeOpacity={0.6}
+                  style={{
+                    position: 'absolute',
+                    right: 12,
+                    top: '50%',
+                    transform: [{ translateY: -12 }],
+                    width: 24,
+                    height: 24,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                  accessibilityLabel="입력 지우기"
+                >
+                  <Text style={{ fontSize: 16, color: '#999999' }}>✕</Text>
+                </TouchableOpacity>
+              )}
+            </View>
             {customerError && (
               <Text style={{ color: '#e74c3c', fontSize: 14, marginTop: 4 }}>
                 등록되지 않은 거래처입니다
@@ -592,28 +630,53 @@ export default function HomeScreen() {
                 </View>
 
                 <View>
-                  <TextInput
-                    ref={(ref) => { productNameInputRefs.current[item.id] = ref; }}
-                    value={item.productName}
-                    onChangeText={(value) =>
-                      handleUpdateItem(item.id, "productName", value)
-                    }
-                    placeholder="품목명 입력 (초성 가능, 예: ㅎㅂ)"
-                    placeholderTextColor="#666666"
-                    className="text-foreground text-lg"
-                    style={{
-                      fontSize: 18,
-                      backgroundColor: '#ffffff',
-                      borderRadius: 10,
-                      paddingHorizontal: 16,
-                      paddingVertical: 14,
-                      borderColor: productErrors[item.id] ? '#e74c3c' : '#e0e0e0',
-                      borderWidth: productErrors[item.id] ? 2 : 1,
-                    }}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    onFocus={handleInputFocus}
-                  />
+                  <View style={{ position: 'relative' }}>
+                    <TextInput
+                      ref={(ref) => { productNameInputRefs.current[item.id] = ref; }}
+                      value={item.productName}
+                      onChangeText={(value) =>
+                        handleUpdateItem(item.id, "productName", value)
+                      }
+                      placeholder="품목명 입력 (초성 가능, 예: ㅎㅂ)"
+                      placeholderTextColor="#666666"
+                      className="text-foreground text-lg"
+                      style={{
+                        fontSize: 18,
+                        backgroundColor: '#ffffff',
+                        borderRadius: 10,
+                        paddingHorizontal: 16,
+                        paddingRight: item.productName ? 44 : 16,
+                        paddingVertical: 14,
+                        borderColor: productErrors[item.id] ? '#e74c3c' : '#e0e0e0',
+                        borderWidth: productErrors[item.id] ? 2 : 1,
+                      }}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      onFocus={handleInputFocus}
+                    />
+                    {item.productName.length > 0 && (
+                      <TouchableOpacity
+                        onPress={() => {
+                          handleUpdateItem(item.id, "productName", "");
+                          productNameInputRefs.current[item.id]?.focus();
+                        }}
+                        activeOpacity={0.6}
+                        style={{
+                          position: 'absolute',
+                          right: 10,
+                          top: '50%',
+                          transform: [{ translateY: -12 }],
+                          width: 24,
+                          height: 24,
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}
+                        accessibilityLabel="품목명 지우기"
+                      >
+                        <Text style={{ fontSize: 16, color: '#999999' }}>✕</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
                   {productErrors[item.id] && (
                     <Text style={{ color: '#e74c3c', fontSize: 14, marginTop: 4 }}>
                       등록되지 않은 품목입니다

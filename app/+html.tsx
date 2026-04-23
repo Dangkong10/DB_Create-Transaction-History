@@ -44,17 +44,28 @@ export default function Root({ children }: PropsWithChildren) {
       <body>
         {children}
 
-        {/* Service Worker 등록 */}
+        {/* Service Worker 정리: 기존에 등록된 SW가 있으면 모두 언레지스터 + 캐시 정리 */}
         <script dangerouslySetInnerHTML={{ __html: `
           if ('serviceWorker' in navigator) {
-            window.addEventListener('load', function() {
-              navigator.serviceWorker.register('/sw.js')
-                .then(function(reg) {
-                  console.log('[PWA] Service Worker 등록 성공:', reg.scope);
-                })
-                .catch(function(err) {
-                  console.log('[PWA] Service Worker 등록 실패:', err);
-                });
+            window.addEventListener('load', async function() {
+              try {
+                // 모든 등록된 SW 언레지스터
+                var regs = await navigator.serviceWorker.getRegistrations();
+                for (var i = 0; i < regs.length; i++) {
+                  await regs[i].unregister();
+                  console.log('[PWA] Service Worker 언레지스터 완료');
+                }
+                // 모든 캐시 삭제
+                if (window.caches) {
+                  var keys = await caches.keys();
+                  for (var j = 0; j < keys.length; j++) {
+                    await caches.delete(keys[j]);
+                  }
+                  console.log('[PWA] 모든 캐시 삭제 완료');
+                }
+              } catch (err) {
+                console.log('[PWA] SW 정리 실패:', err);
+              }
             });
           }
         `}} />

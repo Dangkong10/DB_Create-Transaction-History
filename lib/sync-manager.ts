@@ -223,6 +223,36 @@ async function processQueueItem(
 
   switch (item.action) {
     case 'create': {
+      // 로컬 createdAt을 ISO로 변환 (재시도 시 동일값 사용 → 멱등성 확보)
+      const createdAtISO = localDateStringToISO(item.data.createdAt);
+
+      // 멱등성 체크: 이미 동일 거래가 서버에 있는지 확인 (이전 재시도에서 서버에 생성됐을 가능성)
+      const { data: existing, error: checkError } = await supabase
+        .from('transactions')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('customer_name', item.data.customerName)
+        .eq('product_name', item.data.productName)
+        .eq('quantity', item.data.quantity)
+        .eq('date', item.data.date)
+        .eq('created_at', createdAtISO)
+        .limit(1);
+
+      if (checkError) throw checkError;
+
+      if (existing && existing.length > 0) {
+        // 이전 재시도에서 서버에 생성됨 → 로컬만 연결하고 INSERT 스킵
+        if (item.localId) {
+          await db.transactions.update(item.localId, {
+            serverId: String(existing[0].id),
+            syncStatus: 'synced',
+          });
+        }
+        console.log('[Sync] CREATE 스킵 (이미 존재):', existing[0].id);
+        break;
+      }
+
+      // 새로 INSERT (createdAt 명시 → 재시도 시 동일 값이 서버에 들어가 중복 체크가 동작)
       const { data, error } = await supabase
         .from('transactions')
         .insert({
@@ -232,6 +262,7 @@ async function processQueueItem(
           quantity: item.data.quantity,
           unit_price: item.data.unitPrice ?? null,
           date: item.data.date,
+          created_at: createdAtISO,
         })
         .select()
         .single();
@@ -321,17 +352,42 @@ export async function pullFromServer(): Promise<Transaction[]> {
         });
       }
     } else {
-      await db.transactions.add({
-        serverId,
-        customerName: row.customer_name,
-        productName: row.product_name,
-        quantity: row.quantity,
-        unitPrice: row.unit_price ?? undefined,
-        date: row.date,
-        createdAt: formatCreatedAt(row.created_at),
-        updatedAt: serverUpdatedAt,
-        syncStatus: 'synced',
-      });
+      // pending 상태의 동일 거래가 있는지 확인 (레이스 컨디션 방지)
+      const pendingAll = await db.transactions.findBySyncStatus('pending');
+      const matchingPending = pendingAll.find(p =>
+        p.customerName === row.customer_name &&
+        p.productName === row.product_name &&
+        p.quantity === row.quantity &&
+        p.date === row.date &&
+        !p.serverId
+      );
+
+      if (matchingPending && matchingPending.localId != null) {
+        // pending 항목에 serverId 연결
+        await db.transactions.update(matchingPending.localId, {
+          serverId,
+          customerName: row.customer_name,
+          productName: row.product_name,
+          quantity: row.quantity,
+          unitPrice: row.unit_price ?? undefined,
+          date: row.date,
+          createdAt: formatCreatedAt(row.created_at),
+          updatedAt: serverUpdatedAt,
+          syncStatus: 'synced',
+        });
+      } else {
+        await db.transactions.add({
+          serverId,
+          customerName: row.customer_name,
+          productName: row.product_name,
+          quantity: row.quantity,
+          unitPrice: row.unit_price ?? undefined,
+          date: row.date,
+          createdAt: formatCreatedAt(row.created_at),
+          updatedAt: serverUpdatedAt,
+          syncStatus: 'synced',
+        });
+      }
     }
   }
 
@@ -341,6 +397,25 @@ export async function pullFromServer(): Promise<Transaction[]> {
   for (const local of syncedLocal) {
     if (local.serverId && !serverIds.has(local.serverId)) {
       await db.transactions.delete(local.localId!);
+    }
+  }
+
+  // 동일 serverId를 가진 중복 로컬 항목 정리
+  const allLocal = await db.transactions.getAll();
+  const serverIdToLocalIds = new Map<string, number[]>();
+  for (const local of allLocal) {
+    if (local.serverId && local.localId != null) {
+      const ids = serverIdToLocalIds.get(local.serverId) || [];
+      ids.push(local.localId);
+      serverIdToLocalIds.set(local.serverId, ids);
+    }
+  }
+  for (const [, localIds] of serverIdToLocalIds) {
+    if (localIds.length > 1) {
+      // 첫 번째만 유지, 나머지 삭제
+      for (let i = 1; i < localIds.length; i++) {
+        await db.transactions.delete(localIds[i]);
+      }
     }
   }
 
@@ -367,6 +442,20 @@ export async function getLocalTransactions(): Promise<(LocalTransaction & { loca
 }
 
 // ==================== 내부 헬퍼 ====================
+
+/**
+ * 로컬 시간 문자열(YYYY-MM-DD HH:mm:ss) → ISO 8601
+ * 재시도 시 동일 ISO를 서버에 보내 중복 체크를 가능하게 함
+ */
+function localDateStringToISO(localStr: string): string {
+  if (!localStr) return new Date().toISOString();
+  // ISO 형식이면 그대로 반환
+  if (localStr.includes('T')) return localStr;
+  const [datePart, timePart] = localStr.split(' ');
+  const [y, m, d] = datePart.split('-').map(Number);
+  const [h = 0, mm = 0, s = 0] = (timePart || '00:00:00').split(':').map(Number);
+  return new Date(y, m - 1, d, h, mm, s).toISOString();
+}
 
 function formatCreatedAt(isoString: string): string {
   const d = new Date(isoString);

@@ -188,9 +188,12 @@ export function openPrintModal(options: {
   // 이벤트 바인딩
   overlay.querySelector('#ppm-close-btn')?.addEventListener('click', closePrintModal);
   overlay.querySelector('#ppm-print-btn')?.addEventListener('click', () => window.print());
-  overlay.addEventListener('click', (e) => {
-    if (e.target === overlay) closePrintModal();
-  });
+  // 모달 열자마자 잔여 클릭 이벤트로 닫히는 것 방지: 300ms 후 리스너 부착
+  setTimeout(() => {
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) closePrintModal();
+    });
+  }, 300);
 
   // ESC 키로 닫기
   const handleEsc = (e: KeyboardEvent) => {
