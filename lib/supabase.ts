@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import type { Customer, Product } from './types';
 // Supabase 설정
 const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
 const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
@@ -418,4 +419,231 @@ export async function deleteSpecialPrice(id: string): Promise<void> {
   }
 
   console.log('[deleteSpecialPrice] Deleted:', id);
+}
+
+// ==================== 거래처 CRUD (Supabase) ====================
+
+function rowToCustomer(row: any): Customer {
+  return {
+    id: String(row.id),
+    name: row.name,
+    aliases: Array.isArray(row.aliases) ? row.aliases : [],
+  };
+}
+
+export async function getCustomersFromDB(): Promise<Customer[]> {
+  const session = await getSession();
+  if (!session) throw new Error('로그인이 필요합니다.');
+
+  const { data, error } = await supabase
+    .from('customers')
+    .select('*')
+    .order('name', { ascending: true });
+
+  if (error) {
+    console.error('[getCustomersFromDB] Error:', error);
+    throw new Error(`거래처 조회 실패: ${error.message}`);
+  }
+
+  return (data ?? []).map(rowToCustomer);
+}
+
+export async function addCustomerToDB(name: string, aliases: string[] = []): Promise<Customer> {
+  const session = await getSession();
+  if (!session) throw new Error('로그인이 필요합니다.');
+
+  const { data, error } = await supabase
+    .from('customers')
+    .insert({ user_id: session.user.id, name, aliases })
+    .select()
+    .single();
+
+  if (error) {
+    console.error('[addCustomerToDB] Error:', error);
+    throw new Error(`거래처 추가 실패: ${error.message}`);
+  }
+
+  return rowToCustomer(data);
+}
+
+export async function updateCustomerInDB(id: string, updates: Partial<Customer>): Promise<void> {
+  const session = await getSession();
+  if (!session) throw new Error('로그인이 필요합니다.');
+
+  const patch: Record<string, any> = {};
+  if (updates.name !== undefined) patch.name = updates.name;
+  if (updates.aliases !== undefined) patch.aliases = updates.aliases;
+
+  const { error } = await supabase
+    .from('customers')
+    .update(patch)
+    .eq('id', Number(id));
+
+  if (error) {
+    console.error('[updateCustomerInDB] Error:', error);
+    throw new Error(`거래처 수정 실패: ${error.message}`);
+  }
+}
+
+export async function deleteCustomerFromDB(id: string): Promise<void> {
+  const session = await getSession();
+  if (!session) throw new Error('로그인이 필요합니다.');
+
+  const { error } = await supabase
+    .from('customers')
+    .delete()
+    .eq('id', Number(id));
+
+  if (error) {
+    console.error('[deleteCustomerFromDB] Error:', error);
+    throw new Error(`거래처 삭제 실패: ${error.message}`);
+  }
+}
+
+/** 여러 거래처를 한 번에 업서트 (마이그레이션/대량 가져오기용). 동일 이름 중복은 무시. */
+export async function bulkUpsertCustomers(
+  customers: Array<{ name: string; aliases?: string[] }>,
+): Promise<number> {
+  const session = await getSession();
+  if (!session) throw new Error('로그인이 필요합니다.');
+  if (customers.length === 0) return 0;
+
+  const rows = customers.map((c) => ({
+    user_id: session.user.id,
+    name: c.name,
+    aliases: c.aliases ?? [],
+  }));
+
+  const { error } = await supabase
+    .from('customers')
+    .upsert(rows, { onConflict: 'user_id,name', ignoreDuplicates: true });
+
+  if (error) {
+    console.error('[bulkUpsertCustomers] Error:', error);
+    throw new Error(`거래처 일괄 업로드 실패: ${error.message}`);
+  }
+
+  return customers.length;
+}
+
+// ==================== 품목 CRUD (Supabase) ====================
+
+function rowToProduct(row: any): Product {
+  return {
+    id: String(row.id),
+    name: row.name,
+    category: row.category,
+    aliases: Array.isArray(row.aliases) ? row.aliases : [],
+    unitPrice: row.unit_price ?? undefined,
+  };
+}
+
+export async function getProductsFromDB(): Promise<Product[]> {
+  const session = await getSession();
+  if (!session) throw new Error('로그인이 필요합니다.');
+
+  const { data, error } = await supabase
+    .from('products')
+    .select('*')
+    .order('name', { ascending: true });
+
+  if (error) {
+    console.error('[getProductsFromDB] Error:', error);
+    throw new Error(`품목 조회 실패: ${error.message}`);
+  }
+
+  return (data ?? []).map(rowToProduct);
+}
+
+export async function addProductToDB(
+  name: string,
+  category: string,
+  aliases: string[] = [],
+  unitPrice?: number,
+): Promise<Product> {
+  const session = await getSession();
+  if (!session) throw new Error('로그인이 필요합니다.');
+
+  const { data, error } = await supabase
+    .from('products')
+    .insert({
+      user_id: session.user.id,
+      name,
+      category,
+      aliases,
+      unit_price: unitPrice ?? null,
+    })
+    .select()
+    .single();
+
+  if (error) {
+    console.error('[addProductToDB] Error:', error);
+    throw new Error(`품목 추가 실패: ${error.message}`);
+  }
+
+  return rowToProduct(data);
+}
+
+export async function updateProductInDB(id: string, updates: Partial<Product>): Promise<void> {
+  const session = await getSession();
+  if (!session) throw new Error('로그인이 필요합니다.');
+
+  const patch: Record<string, any> = {};
+  if (updates.name !== undefined) patch.name = updates.name;
+  if (updates.category !== undefined) patch.category = updates.category;
+  if (updates.aliases !== undefined) patch.aliases = updates.aliases;
+  if (updates.unitPrice !== undefined) patch.unit_price = updates.unitPrice;
+
+  const { error } = await supabase
+    .from('products')
+    .update(patch)
+    .eq('id', Number(id));
+
+  if (error) {
+    console.error('[updateProductInDB] Error:', error);
+    throw new Error(`품목 수정 실패: ${error.message}`);
+  }
+}
+
+export async function deleteProductFromDB(id: string): Promise<void> {
+  const session = await getSession();
+  if (!session) throw new Error('로그인이 필요합니다.');
+
+  const { error } = await supabase
+    .from('products')
+    .delete()
+    .eq('id', Number(id));
+
+  if (error) {
+    console.error('[deleteProductFromDB] Error:', error);
+    throw new Error(`품목 삭제 실패: ${error.message}`);
+  }
+}
+
+/** 여러 품목을 한 번에 업서트 (마이그레이션/대량 가져오기용). 동일 이름 중복은 무시. */
+export async function bulkUpsertProducts(
+  products: Array<{ name: string; category: string; aliases?: string[]; unitPrice?: number }>,
+): Promise<number> {
+  const session = await getSession();
+  if (!session) throw new Error('로그인이 필요합니다.');
+  if (products.length === 0) return 0;
+
+  const rows = products.map((p) => ({
+    user_id: session.user.id,
+    name: p.name,
+    category: p.category,
+    aliases: p.aliases ?? [],
+    unit_price: p.unitPrice ?? null,
+  }));
+
+  const { error } = await supabase
+    .from('products')
+    .upsert(rows, { onConflict: 'user_id,name', ignoreDuplicates: true });
+
+  if (error) {
+    console.error('[bulkUpsertProducts] Error:', error);
+    throw new Error(`품목 일괄 업로드 실패: ${error.message}`);
+  }
+
+  return products.length;
 }

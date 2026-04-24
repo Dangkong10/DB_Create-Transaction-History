@@ -29,6 +29,8 @@ import {
   updateProduct,
   saveCustomers,
   saveProducts,
+  uploadLocalToSupabase,
+  getLocalCacheCounts,
 } from "@/lib/storage";
 import {
   exportCustomers,
@@ -82,6 +84,46 @@ export default function ManageScreen() {
   const [editingUnitPrice, setEditingUnitPrice] = useState("");
 
   const { user, logout, refresh: refreshAuth } = useAuth();
+
+  const [migrationLoading, setMigrationLoading] = useState(false);
+  const [localCacheCounts, setLocalCacheCounts] = useState<{ customers: number; products: number } | null>(null);
+
+  useEffect(() => {
+    getLocalCacheCounts().then(setLocalCacheCounts).catch(() => setLocalCacheCounts(null));
+  }, []);
+
+  async function handleUploadLocalToSupabase() {
+    const counts = await getLocalCacheCounts();
+    if (counts.customers === 0 && counts.products === 0) {
+      showToast('이 기기에 업로드할 로컬 데이터가 없습니다.', 'info');
+      return;
+    }
+    showConfirm({
+      title: '로컬 데이터 업로드',
+      message:
+        `이 기기의 거래처 ${counts.customers}건, 품목 ${counts.products}건을 Supabase에 업로드합니다.\n` +
+        `이미 Supabase에 같은 이름이 있으면 건너뜁니다. 계속하시겠습니까?`,
+      confirmText: '업로드',
+      cancelText: '취소',
+      onConfirm: async () => {
+        setMigrationLoading(true);
+        try {
+          const result = await uploadLocalToSupabase();
+          showToast(
+            `업로드 완료: 거래처 ${result.customers}건, 품목 ${result.products}건 (중복은 제외됨)`,
+            'success',
+          );
+          await loadData();
+          const after = await getLocalCacheCounts();
+          setLocalCacheCounts(after);
+        } catch (err: any) {
+          showToast(err?.message ?? '업로드에 실패했습니다.', 'error');
+        } finally {
+          setMigrationLoading(false);
+        }
+      },
+    });
+  }
 
   // 엑셀 가져오기 상태
   const [importModalVisible, setImportModalVisible] = useState(false);
@@ -838,6 +880,43 @@ export default function ManageScreen() {
                 </View>
               )}
             </View>
+
+            {user && (
+              <View style={{
+                backgroundColor: '#ffffff', borderRadius: 14, padding: 16, marginTop: 16,
+                borderWidth: 1, borderColor: '#e0e0e0', ...SHADOW,
+              }}>
+                <Text style={{ fontSize: 18, fontWeight: '600', color: '#1B365D', marginBottom: 8 }}>
+                  초기 데이터 업로드
+                </Text>
+                <Text style={{ fontSize: 13, color: '#666666', marginBottom: 12, lineHeight: 20 }}>
+                  이 기기의 로컬 저장소에 남아 있는 거래처·품목(단가 포함)을 Supabase로 올립니다.
+                  정본 데이터가 있는 기기(예: 이 Mac)에서 최초 1회만 실행하면 됩니다.
+                  이후에는 다른 기기에서도 Supabase 데이터를 공유합니다.
+                  {"\n\n"}
+                  이미 Supabase에 같은 이름으로 저장된 항목은 중복 처리되어 건너뜁니다 (안전).
+                </Text>
+                {localCacheCounts && (
+                  <Text style={{ fontSize: 13, color: '#1B365D', marginBottom: 12 }}>
+                    현재 로컬: 거래처 {localCacheCounts.customers}건, 품목 {localCacheCounts.products}건
+                  </Text>
+                )}
+                <TouchableOpacity
+                  onPress={handleUploadLocalToSupabase}
+                  disabled={migrationLoading}
+                  style={{
+                    backgroundColor: migrationLoading ? '#888' : '#1B365D',
+                    paddingVertical: 12, borderRadius: 10,
+                    flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 8,
+                  }}
+                >
+                  {migrationLoading && <ActivityIndicator size="small" color="#fff" />}
+                  <Text style={{ color: '#fff', fontWeight: '600', textAlign: 'center', fontSize: 16 }}>
+                    {migrationLoading ? '업로드 중...' : '로컬 데이터를 Supabase에 업로드'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
           </ScrollView>
         )}
       </ResponsiveContainer>

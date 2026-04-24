@@ -156,7 +156,7 @@
 - **스타일링**: NativeWind (Tailwind CSS)
 - **초성 검색**: 한글 자모 분리 라이브러리 (hangul-js 또는 자체 구현)
 - **상태 관리**: React Context + useState
-- **데이터 저장**: AsyncStorage (로컬), Google Sheets API (클라우드)
+- **데이터 저장**: IndexedDB (로컬/오프라인 큐), Supabase (클라우드 DB)
 - **HTTP 클라이언트**: axios
 
 ## 구현 우선순위

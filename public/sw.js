@@ -1,25 +1,49 @@
-// 자폭 Service Worker - 기존 SW와 캐시를 모두 제거
-// (문제가 된 캐싱 로직을 완전히 제거하고 SW 자체를 언레지스터)
+const CACHE_NAME = 'transaction-record-v2';
+
+const PRECACHE_URLS = [
+  '/',
+  '/manifest.json',
+  '/icon-192x192.png',
+  '/icon-512x512.png',
+];
 
 self.addEventListener('install', (event) => {
+  event.waitUntil(
+    caches.open(CACHE_NAME).then((cache) => cache.addAll(PRECACHE_URLS))
+  );
   self.skipWaiting();
 });
 
 self.addEventListener('activate', (event) => {
-  event.waitUntil((async () => {
-    // 모든 캐시 삭제
-    const keys = await caches.keys();
-    await Promise.all(keys.map((k) => caches.delete(k)));
-
-    // SW 자체 언레지스터
-    await self.registration.unregister();
-
-    // 열려있는 모든 클라이언트 페이지 새로고침
-    const clients = await self.clients.matchAll({ type: 'window' });
-    for (const client of clients) {
-      client.navigate(client.url);
-    }
-  })());
+  event.waitUntil(
+    caches.keys().then((keys) =>
+      Promise.all(
+        keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))
+      )
+    )
+  );
+  self.clients.claim();
 });
 
-// fetch 이벤트는 처리하지 않음 (브라우저 기본 동작으로 fallthrough)
+self.addEventListener('fetch', (event) => {
+  if (
+    event.request.method !== 'GET' ||
+    event.request.url.includes('supabase') ||
+    event.request.url.includes('/rest/') ||
+    event.request.url.includes('/auth/')
+  ) {
+    return;
+  }
+
+  event.respondWith(
+    fetch(event.request)
+      .then((response) => {
+        if (response.status === 200) {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+        }
+        return response;
+      })
+      .catch(() => caches.match(event.request))
+  );
+});

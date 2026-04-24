@@ -21,6 +21,7 @@ import { loadCustomers, loadProducts } from "@/lib/storage";
 import { searchCustomers, searchProducts } from "@/lib/search-utils";
 import type { Customer, Product, TransactionItem } from "@/lib/types";
 import { saveTransactionOffline } from "@/lib/sync-manager";
+import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/hooks/use-auth";
 import { useSync } from "@/hooks/use-sync";
 import { SyncStatusBadge } from "@/components/sync-status-badge";
@@ -265,6 +266,15 @@ export default function HomeScreen() {
       return;
     }
     isSubmittingRef.current = true;
+
+    // 세션 체크: 만료됐으면 저장 중단하고 AuthGuard 가 로그인 화면으로 유도
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      isSubmittingRef.current = false;
+      showToast("로그인이 만료되었습니다. 다시 로그인해 주세요.", "error");
+      await supabase.auth.signOut();
+      return;
+    }
 
     // 유효성 검사
     if (!selectedCustomer) {
