@@ -5,14 +5,19 @@ import { HapticTab } from "@/components/haptic-tab";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { Platform, useWindowDimensions } from "react-native";
 import { useColors } from "@/hooks/use-colors";
+import { useIsMounted } from "@/hooks/use-is-mounted";
 
 export default function TabLayout() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
+  const mounted = useIsMounted();
 
-  const isTablet = width >= 768;
-  const isDesktop = width >= 1025;
+  // SSR(빌드 타임)과 첫 클라이언트 렌더는 0 으로 통일 → 둘 다 mobile 값.
+  // mount 후 실제 width 로 전환되어 태블릿/데스크톱 사이즈 적용. (React #418 hydration mismatch 방지)
+  const effectiveWidth = mounted ? width : 0;
+  const isTablet = effectiveWidth >= 768;
+  const isDesktop = effectiveWidth >= 1025;
 
   const bottomPadding = Platform.OS === "web"
     ? (isDesktop ? 14 : isTablet ? 12 : 10)

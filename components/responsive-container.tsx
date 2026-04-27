@@ -1,5 +1,6 @@
 import { View, useWindowDimensions, type ViewProps } from "react-native";
 import { cn } from "@/lib/utils";
+import { useIsMounted } from "@/hooks/use-is-mounted";
 
 export interface ResponsiveContainerProps extends ViewProps {
   /**
@@ -20,7 +21,11 @@ export function ResponsiveContainer({
   ...props
 }: ResponsiveContainerProps) {
   const { width } = useWindowDimensions();
-  const isDesktop = width >= 1025;
+  const mounted = useIsMounted();
+  // SSR + 첫 클라이언트 렌더는 0 으로 통일해 hydration mismatch 방지.
+  // mount 후 실제 width 로 전환되어 데스크톱 max-width 가 적용됨.
+  const effectiveWidth = mounted ? width : 0;
+  const isDesktop = effectiveWidth >= 1025;
 
   return (
     <View
