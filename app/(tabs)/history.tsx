@@ -43,10 +43,14 @@ export default function HistoryScreen() {
       window.location.href = "/login";
     }
   };
-  const [selectedDate, setSelectedDate] = useState(() => {
+  // SSR/첫 렌더에선 빈 문자열로 두고 mount 후 오늘 날짜로 채움 — new Date() 가 SSR 빌드 시각과
+  // 클라이언트 시각이 달라 발생하던 hydration mismatch (React error #418) 방지
+  const [selectedDate, setSelectedDate] = useState<string>("");
+  useEffect(() => {
+    if (selectedDate) return;
     const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  });
+    setSelectedDate(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+  }, [selectedDate]);
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [activeTab, setActiveTab] = useState<"today" | "calendar">("today");
   const [searchQuery, setSearchQuery] = useState("");
@@ -122,11 +126,13 @@ export default function HistoryScreen() {
   };
 
   useEffect(() => {
+    if (!selectedDate) return;
     loadTransactions();
   }, [selectedDate]);
 
   // 다른 페이지에서 저장/수정/삭제 시 즉시 반영
   useEffect(() => {
+    if (!selectedDate) return;
     const handleChanged = () => loadTransactions();
     window.addEventListener('transaction:changed', handleChanged);
     // 탭 전환 시에도 최신 데이터 로드 (web)
@@ -478,9 +484,11 @@ export default function HistoryScreen() {
               <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>◀ 이전</Text>
             </TouchableOpacity>
             <Text style={{ fontWeight: '700', fontSize: 16, color: '#1B365D' }}>
-              {new Date(selectedDate).toLocaleDateString("ko-KR", {
-                year: "numeric", month: "long", day: "numeric",
-              })}
+              {selectedDate
+                ? new Date(selectedDate).toLocaleDateString("ko-KR", {
+                    year: "numeric", month: "long", day: "numeric",
+                  })
+                : ""}
             </Text>
             <TouchableOpacity
               onPress={goToNextDay}
