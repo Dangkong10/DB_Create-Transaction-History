@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   ScrollView,
   Text,
@@ -53,7 +53,8 @@ export default function HistoryScreen() {
     setSelectedDate(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
   }, [selectedDate]);
   const [showDatePicker, setShowDatePicker] = useState(false);
-  const [activeTab, setActiveTab] = useState<"today" | "calendar">("today");
+  const [calendarOpen, setCalendarOpen] = useState(false);
+  const calendarWrapperRef = useRef<View>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<{
@@ -131,6 +132,29 @@ export default function HistoryScreen() {
     if (!selectedDate) return;
     loadTransactions();
   }, [selectedDate]);
+
+  // 달력 팝업: 바깥 클릭 / ESC 로 닫기 (web 전용)
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof document === 'undefined') return;
+    if (!calendarOpen) return;
+
+    const handleClickOutside = (e: MouseEvent) => {
+      const node = calendarWrapperRef.current as unknown as HTMLElement | null;
+      if (node && !node.contains(e.target as Node)) {
+        setCalendarOpen(false);
+      }
+    };
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setCalendarOpen(false);
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleEsc);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleEsc);
+    };
+  }, [calendarOpen]);
 
   // 다른 페이지에서 저장/수정/삭제 시 즉시 반영
   useEffect(() => {
@@ -500,53 +524,77 @@ export default function HistoryScreen() {
             </TouchableOpacity>
           </View>
 
-          {/* 액션 바 */}
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
-            <TouchableOpacity
-              onPress={() => {
-                setActiveTab("today");
-                setSearchQuery("");
-              }}
-              style={{
-                flexBasis: '23%', flexGrow: 1, padding: 10, borderRadius: 10, backgroundColor: '#ffffff',
-                borderWidth: 1, borderColor: activeTab === 'today' ? '#1B365D' : '#e0e0e0',
-              }}
-            >
-              <Text style={{
-                textAlign: 'center', fontSize: 13, fontWeight: '600', color: '#1B365D',
-              }}>당일 전체 보기</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => setActiveTab("calendar")}
-              style={{
-                flexBasis: '23%', flexGrow: 1, padding: 10, borderRadius: 10, backgroundColor: '#ffffff',
-                borderWidth: 1, borderColor: activeTab === 'calendar' ? '#1B365D' : '#e0e0e0',
-                flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4,
-              }}
-            >
-              <MaterialIcons name="calendar-today" size={16} color={activeTab === 'calendar' ? '#1B365D' : '#666666'} />
-              <Text style={{ fontSize: 13, fontWeight: '600', color: '#1B365D' }}>달력</Text>
-            </TouchableOpacity>
+          {/* 액션 바 — 3 버튼 (달력 / 당일 내보내기 / 기간 집계) */}
+          <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+            {/* 달력 + 팝업 (relative wrapper) */}
+            <View ref={calendarWrapperRef} style={{ flex: 1, position: 'relative' }}>
+              <TouchableOpacity
+                onPress={() => setCalendarOpen((prev) => !prev)}
+                style={{
+                  padding: 10, borderRadius: 10, backgroundColor: '#ffffff',
+                  borderWidth: 1, borderColor: calendarOpen ? '#1B365D' : '#e0e0e0',
+                  flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4,
+                }}
+              >
+                <MaterialIcons name="calendar-today" size={16} color={calendarOpen ? '#1B365D' : '#666666'} />
+                <Text style={{ fontSize: 14, fontWeight: '600', color: '#1B365D' }}>달력</Text>
+              </TouchableOpacity>
+
+              {calendarOpen && (
+                <View
+                  style={{
+                    position: 'absolute',
+                    top: '100%',
+                    left: 0,
+                    marginTop: 8,
+                    width: 300,
+                    maxWidth: 320,
+                    zIndex: 100,
+                    backgroundColor: '#ffffff',
+                    borderRadius: 14,
+                    borderWidth: 1,
+                    borderColor: '#e0e0e0',
+                    padding: 14,
+                    ...(Platform.OS === 'web'
+                      ? { boxShadow: '0 4px 16px rgba(0,0,0,0.10)' } as any
+                      : { shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.10, shadowRadius: 16, elevation: 8 }),
+                  }}
+                >
+                  <MonthlyCalendar
+                    selectedDate={selectedDate}
+                    onDateSelect={(date) => {
+                      setSelectedDate(date);
+                      setCalendarOpen(false);
+                    }}
+                    onGoToToday={() => {
+                      goToToday();
+                      setCalendarOpen(false);
+                    }}
+                  />
+                </View>
+              )}
+            </View>
+
             <TouchableOpacity
               onPress={handleExportExcel}
               disabled={transactions.length === 0}
               style={{
-                flexBasis: '23%', flexGrow: 1, padding: 10, borderRadius: 10, backgroundColor: '#ffffff',
-                borderWidth: 1, borderColor: '#1B365D',
+                flex: 1, padding: 10, borderRadius: 10, backgroundColor: '#ffffff',
+                borderWidth: 1, borderColor: '#e0e0e0',
                 opacity: transactions.length === 0 ? 0.5 : 1,
               }}
             >
-              <Text style={{ textAlign: 'center', fontSize: 13, fontWeight: '600', color: '#1B365D' }}>
-                당일 내보내기
+              <Text style={{ textAlign: 'center', fontSize: 14, fontWeight: '600', color: '#1B365D' }}>
+                📥 당일 내보내기
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
               onPress={() => setPeriodModalOpen(true)}
               style={{
-                flexBasis: '23%', flexGrow: 1, padding: 10, borderRadius: 10, backgroundColor: '#1B365D',
+                flex: 1, padding: 10, borderRadius: 10, backgroundColor: '#1B365D',
               }}
             >
-              <Text style={{ textAlign: 'center', fontSize: 13, fontWeight: '600', color: '#fff' }}>
+              <Text style={{ textAlign: 'center', fontSize: 14, fontWeight: '600', color: '#fff' }}>
                 📊 기간 집계
               </Text>
             </TouchableOpacity>
@@ -593,27 +641,12 @@ export default function HistoryScreen() {
             </Text>
           </TouchableOpacity>
 
-          {/* 달력 탭 */}
-          {activeTab === "calendar" && (
-            <View style={{ marginTop: 12 }}>
-              <MonthlyCalendar
-                selectedDate={selectedDate}
-                onDateSelect={(date) => {
-                  setSelectedDate(date);
-                  setActiveTab("today");
-                }}
-                onGoToToday={goToToday}
-              />
-            </View>
-          )}
-
           {/* 테이블 형식 거래 내역 */}
-          {activeTab === "today" && (
-            <View style={{
-              marginTop: 12, backgroundColor: '#ffffff', borderRadius: 14, overflow: 'hidden',
-              alignSelf: 'center', width: '100%',
-              ...SHADOW,
-            }}>
+          <View style={{
+            marginTop: 12, backgroundColor: '#ffffff', borderRadius: 14, overflow: 'hidden',
+            alignSelf: 'center', width: '100%',
+            ...SHADOW,
+          }}>
               {/* 테이블 헤더 */}
               <View style={{
                 flexDirection: 'row', backgroundColor: '#1B365D', paddingVertical: 14, paddingHorizontal: 12,
@@ -790,7 +823,6 @@ export default function HistoryScreen() {
                 ))
               )}
             </View>
-          )}
         </ScrollView>
       </ResponsiveContainer>
       <PeriodExportModal
