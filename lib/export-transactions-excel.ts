@@ -87,10 +87,12 @@ export async function exportTransactionsToExcel(
     docNoCounter[dateStr] = (docNoCounter[dateStr] || 0) + 1;
     const docNo = `IO-${dateStr}-${String(docNoCounter[dateStr]).padStart(3, '0')}`;
 
+    // 반품(RETURN)은 수량·공급가액을 음수로 그대로 출력 (ERP 매출 차감 관행).
+    // 단가는 항상 양수.
     const isReturn = t.quantity < 0;
-    const absQty = Math.abs(t.quantity);
+    const qty = t.quantity;
     const unitPrice = t.unitPrice || 0;
-    const supplyAmount = absQty * unitPrice;
+    const supplyAmount = qty * unitPrice;
 
     return {
       '전표번호': docNo,
@@ -98,7 +100,7 @@ export async function exportTransactionsToExcel(
       '구분': isReturn ? 'RETURN' : 'OUT',
       '거래처명': t.customerName,
       '품목명': t.productName,
-      '수량': absQty,
+      '수량': qty,
       '단가': unitPrice,
       '공급가액': supplyAmount,
     };
