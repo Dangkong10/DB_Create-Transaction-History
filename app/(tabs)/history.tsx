@@ -23,6 +23,7 @@ import { useSync } from "@/hooks/use-sync";
 import { SyncStatusBadge } from "@/components/sync-status-badge";
 import { filterByChosung } from "@/lib/chosung-utils";
 import { MonthlyCalendar } from "@/components/monthly-calendar";
+import { PeriodExportModal } from "@/components/period-export-modal";
 
 // 같은 거래처+시간으로 거래를 그룹핑하기 위한 타입
 interface TransactionGroup {
@@ -66,6 +67,7 @@ export default function HistoryScreen() {
   const [pendingLocalIds, setPendingLocalIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [sortOrder, setSortOrder] = useState<'newest' | 'oldest'>('newest');
+  const [periodModalOpen, setPeriodModalOpen] = useState(false);
 
   const mapLocalToTransaction = (t: Awaited<ReturnType<typeof getLocalTransactions>>[number]): Transaction => ({
     id: t.serverId || `local-${t.localId}`,
@@ -499,46 +501,53 @@ export default function HistoryScreen() {
           </View>
 
           {/* 액션 바 */}
-          <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
             <TouchableOpacity
               onPress={() => {
                 setActiveTab("today");
                 setSearchQuery("");
               }}
               style={{
-                flex: 1, padding: 10, borderRadius: 10, backgroundColor: activeTab === 'today' ? '#ffffff' : '#ffffff',
+                flexBasis: '23%', flexGrow: 1, padding: 10, borderRadius: 10, backgroundColor: '#ffffff',
                 borderWidth: 1, borderColor: activeTab === 'today' ? '#1B365D' : '#e0e0e0',
               }}
             >
               <Text style={{
-                textAlign: 'center', fontSize: 13, fontWeight: '600',
-                color: activeTab === 'today' ? '#1B365D' : '#1B365D',
-              }}>당일 전체 내역 보기</Text>
+                textAlign: 'center', fontSize: 13, fontWeight: '600', color: '#1B365D',
+              }}>당일 전체 보기</Text>
             </TouchableOpacity>
             <TouchableOpacity
               onPress={() => setActiveTab("calendar")}
               style={{
-                flex: 1, padding: 10, borderRadius: 10, backgroundColor: '#ffffff',
+                flexBasis: '23%', flexGrow: 1, padding: 10, borderRadius: 10, backgroundColor: '#ffffff',
                 borderWidth: 1, borderColor: activeTab === 'calendar' ? '#1B365D' : '#e0e0e0',
                 flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4,
               }}
             >
               <MaterialIcons name="calendar-today" size={16} color={activeTab === 'calendar' ? '#1B365D' : '#666666'} />
-              <Text style={{
-                fontSize: 13, fontWeight: '600',
-                color: activeTab === 'calendar' ? '#1B365D' : '#1B365D',
-              }}>달력</Text>
+              <Text style={{ fontSize: 13, fontWeight: '600', color: '#1B365D' }}>달력</Text>
             </TouchableOpacity>
             <TouchableOpacity
               onPress={handleExportExcel}
               disabled={transactions.length === 0}
               style={{
-                flex: 1, padding: 10, borderRadius: 10, backgroundColor: '#1B365D',
+                flexBasis: '23%', flexGrow: 1, padding: 10, borderRadius: 10, backgroundColor: '#ffffff',
+                borderWidth: 1, borderColor: '#1B365D',
                 opacity: transactions.length === 0 ? 0.5 : 1,
               }}
             >
+              <Text style={{ textAlign: 'center', fontSize: 13, fontWeight: '600', color: '#1B365D' }}>
+                당일 내보내기
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => setPeriodModalOpen(true)}
+              style={{
+                flexBasis: '23%', flexGrow: 1, padding: 10, borderRadius: 10, backgroundColor: '#1B365D',
+              }}
+            >
               <Text style={{ textAlign: 'center', fontSize: 13, fontWeight: '600', color: '#fff' }}>
-                엑셀 내보내기
+                📊 기간 집계
               </Text>
             </TouchableOpacity>
           </View>
@@ -784,6 +793,10 @@ export default function HistoryScreen() {
           )}
         </ScrollView>
       </ResponsiveContainer>
+      <PeriodExportModal
+        visible={periodModalOpen}
+        onClose={() => setPeriodModalOpen(false)}
+      />
     </ScreenContainer>
   );
 }
