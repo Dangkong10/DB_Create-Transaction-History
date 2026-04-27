@@ -18,6 +18,7 @@ import { deleteTransaction, updateTransaction, type Transaction } from "@/lib/su
 import { pullFromServer, getLocalTransactions } from "@/lib/sync-manager";
 import { getLastSyncTime } from "@/lib/offline-db";
 import { useAuth } from "@/hooks/use-auth";
+import { useIsMounted } from "@/hooks/use-is-mounted";
 import { useSync } from "@/hooks/use-sync";
 import { SyncStatusBadge } from "@/components/sync-status-badge";
 import { filterByChosung } from "@/lib/chosung-utils";
@@ -35,6 +36,7 @@ export default function HistoryScreen() {
   const { showToast } = useToast();
   const { showConfirm } = useConfirm();
   const { user, logout } = useAuth();
+  const mounted = useIsMounted();
 
   const handleLogin = () => {
     if (Platform.OS === "web") {
@@ -61,54 +63,54 @@ export default function HistoryScreen() {
   const [loading, setLoading] = useState(false);
   const [sortOrder, setSortOrder] = useState<'newest' | 'oldest'>('newest');
 
+  const mapLocalToTransaction = (t: Awaited<ReturnType<typeof getLocalTransactions>>[number]): Transaction => ({
+    id: t.serverId || `local-${t.localId}`,
+    customerName: t.customerName,
+    productName: t.productName,
+    quantity: t.quantity,
+    unitPrice: t.unitPrice,
+    date: t.date,
+    createdAt: t.createdAt,
+  });
+
+  const renderFromLocal = async () => {
+    const localAll = await getLocalTransactions();
+    const localFiltered = localAll.filter((t) => t.date.startsWith(selectedDate));
+
+    const seen = new Set<string>();
+    const mapped: Transaction[] = [];
+    for (const t of localFiltered) {
+      const m = mapLocalToTransaction(t);
+      if (seen.has(m.id)) continue;
+      seen.add(m.id);
+      mapped.push(m);
+    }
+    setTransactions(mapped);
+
+    setPendingLocalIds(
+      new Set(
+        localFiltered
+          .filter((t) => t.syncStatus !== 'synced')
+          .map((t) => t.serverId || `local-${t.localId}`),
+      ),
+    );
+  };
+
   const loadTransactions = async () => {
     try {
       setLoading(true);
 
-      // 1) 먼저 로컬 데이터 표시 (즉시)
-      const localAll = await getLocalTransactions();
-      const localFiltered = localAll.filter((t) => t.date.startsWith(selectedDate));
-      const pendingIds = new Set(
-        localFiltered.filter(t => t.syncStatus !== 'synced').map(t => `local-${t.localId}`)
-      );
-      setPendingLocalIds(pendingIds);
+      // 1) 먼저 로컬 데이터를 즉시 표시 (오프라인이거나 서버 풀이 늦어도 사용자 눈에는 보임)
+      await renderFromLocal();
 
-      // 로컬 → Transaction 형태 변환
-      const localMapped: Transaction[] = localFiltered.map(t => ({
-        id: t.serverId || `local-${t.localId}`,
-        customerName: t.customerName,
-        productName: t.productName,
-        quantity: t.quantity,
-        unitPrice: t.unitPrice,
-        date: t.date,
-        createdAt: t.createdAt,
-      }));
-
-      // id 기준 중복 제거 후 우선 표시
-      const seenIds = new Set<string>();
-      const uniqueLocal = localMapped.filter(t => {
-        if (seenIds.has(t.id)) return false;
-        seenIds.add(t.id);
-        return true;
-      });
-
-      if (uniqueLocal.length > 0) {
-        setTransactions(uniqueLocal);
-      }
-
-      // 2) 온라인이면 서버에서 최신 데이터 동기화
+      // 2) 온라인이면 서버 풀 → pullFromServer 가 로컬 IDB 에 머지하므로 다시 로컬을 읽어 표시
+      //    (이렇게 해야 아직 syncQueue 에서 처리 중인 pending 항목이 화면에서 사라지지 않음)
       if (navigator.onLine) {
         try {
-          const serverAll = await pullFromServer();
-          const serverFiltered = serverAll.filter((t) => t.date.startsWith(selectedDate));
-          setTransactions(serverFiltered);
-          setPendingLocalIds(new Set()); // 서버 동기화 완료
+          await pullFromServer();
+          await renderFromLocal();
         } catch (serverErr: any) {
           console.warn("서버 동기화 실패, 로컬 데이터 사용:", serverErr);
-          // 로컬에도 없었으면 기존 방식 fallback
-          if (localMapped.length === 0) {
-            showToast("거래 내역��� 불러오는데 실패했습니다.", "error");
-          }
         }
       }
     } catch (error: any) {
@@ -421,9 +423,9 @@ export default function HistoryScreen() {
           contentContainerStyle={{ padding: 20, paddingBottom: 100 }}
           style={{ flex: 1 }}
         >
-          {/* 로그인 정보 헤더 */}
-          <View style={{ flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', marginBottom: 12, gap: 12 }}>
-            {user ? (
+          {/* 로그인 정보 헤더 — mount 전엔 빈 공간으로 hydration mismatch 방지 */}
+          <View style={{ flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', marginBottom: 12, gap: 12, minHeight: 20 }}>
+            {mounted && (user ? (
               <>
                 <Text style={{ fontSize: 14, color: '#666666' }}>{user.email}</Text>
                 <TouchableOpacity
@@ -445,7 +447,7 @@ export default function HistoryScreen() {
               <TouchableOpacity onPress={handleLogin}>
                 <Text style={{ fontSize: 14, color: '#1B365D', fontWeight: '600' }}>로그인</Text>
               </TouchableOpacity>
-            )}
+            ))}
           </View>
 
           {/* 헤더 */}

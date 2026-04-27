@@ -50,6 +50,7 @@ import { PRODUCT_CATEGORIES } from "@/lib/data";
 import { getCustomerDisplayName, getProductDisplayName, searchProducts } from "@/lib/search-utils";
 import { getSpecialPricesByCustomer, addSpecialPrice, deleteSpecialPrice } from "@/lib/supabase";
 import { useAuth } from "@/hooks/use-auth";
+import { useIsMounted } from "@/hooks/use-is-mounted";
 
 const SHADOW = Platform.OS === 'web'
   ? { boxShadow: '0 2px 12px rgba(0,0,0,0.06)' } as any
@@ -84,6 +85,7 @@ export default function ManageScreen() {
   const [editingUnitPrice, setEditingUnitPrice] = useState("");
 
   const { user, logout, refresh: refreshAuth } = useAuth();
+  const mounted = useIsMounted();
 
   const [migrationLoading, setMigrationLoading] = useState(false);
   const [localCacheCounts, setLocalCacheCounts] = useState<{ customers: number; products: number } | null>(null);
@@ -434,9 +436,9 @@ export default function ManageScreen() {
     <ScreenContainer style={{ backgroundColor: '#f5f5f5' }}>
       <ResponsiveContainer className="flex-1">
         <View style={{ padding: 20, paddingBottom: 0 }}>
-          {/* 로그인 정보 */}
-          <View style={{ flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', marginBottom: 12, gap: 12 }}>
-            {user ? (
+          {/* 로그인 정보 — mount 전엔 빈 공간으로 hydration mismatch 방지 */}
+          <View style={{ flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', marginBottom: 12, gap: 12, minHeight: 20 }}>
+            {mounted && (user ? (
               <>
                 <Text style={{ fontSize: 14, color: '#666666' }}>{user.email}</Text>
                 <TouchableOpacity
@@ -458,7 +460,7 @@ export default function ManageScreen() {
               <TouchableOpacity onPress={handleLogin}>
                 <Text style={{ fontSize: 14, color: '#1B365D', fontWeight: '600' }}>로그인</Text>
               </TouchableOpacity>
-            )}
+            ))}
           </View>
 
           {/* 헤더 */}

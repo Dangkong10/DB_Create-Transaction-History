@@ -23,6 +23,7 @@ import type { Customer, Product, TransactionItem } from "@/lib/types";
 import { saveTransactionOffline } from "@/lib/sync-manager";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/hooks/use-auth";
+import { useIsMounted } from "@/hooks/use-is-mounted";
 import { useSync } from "@/hooks/use-sync";
 import { SyncStatusBadge } from "@/components/sync-status-badge";
 
@@ -31,6 +32,7 @@ export default function HomeScreen() {
   const { showToast } = useToast();
   const { showConfirm } = useConfirm();
   const { user, logout } = useAuth();
+  const mounted = useIsMounted();
   const { syncStatus, isOnline } = useSync();
   
   // 로그인 함수
@@ -386,9 +388,9 @@ export default function HomeScreen() {
         >
           {/* 헤더 영역 */}
           <View className="px-5 pt-5 pb-3">
-            {/* 로그인 정보 (우측 상단) - 항상 표시 */}
-            <View className="flex-row justify-end items-center mb-3 gap-3">
-              {user ? (
+            {/* 로그인 정보 (우측 상단) - mount 전엔 빈 공간으로 hydration mismatch 방지 */}
+            <View className="flex-row justify-end items-center mb-3 gap-3" style={{ minHeight: 20 }}>
+              {mounted && (user ? (
                 <>
                   <Text className="text-sm text-muted">{user.email}</Text>
                   <TouchableOpacity
@@ -416,7 +418,7 @@ export default function HomeScreen() {
                     로그인
                   </Text>
                 </TouchableOpacity>
-              )}
+              ))}
             </View>
             
             <View className="items-center gap-2">

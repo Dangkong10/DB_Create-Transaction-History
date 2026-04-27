@@ -182,15 +182,15 @@ export async function deleteTransactionOffline(localId: number): Promise<void> {
  * 동기화 큐 처리: 오래된 순서대로 하나씩 Supabase에 전송
  */
 export async function processSyncQueue(): Promise<void> {
+  // 락은 await 이전에 동기적으로 잡아야 race 가 안 남
   if (isSyncing || !isOnline()) return;
-
-  const session = await getSession();
-  if (!session) return;
-
   isSyncing = true;
   await emitStatus();
 
   try {
+    const session = await getSession();
+    if (!session) return;
+
     const queue = await db.syncQueue.getAll(); // createdAt 인덱스 순으로 정렬됨
 
     for (const item of queue) {
@@ -210,6 +210,11 @@ export async function processSyncQueue(): Promise<void> {
     }
 
     setLastSyncTime(nowLocalString());
+
+    // 큐 처리 결과를 화면에 즉시 반영 — pending 배지 사라지고 serverId 가 채워진 행이 보임
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('transaction:changed'));
+    }
   } finally {
     isSyncing = false;
     await emitStatus();
