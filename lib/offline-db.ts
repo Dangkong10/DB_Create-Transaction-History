@@ -6,6 +6,8 @@ export interface LocalTransaction {
   localId?: number;
   /** Supabase 서버 ID (동기화 후 할당) */
   serverId?: string;
+  /** 클라이언트가 발급한 UUID — 중복 INSERT 방지용 멱등성 키 */
+  clientId?: string;
   customerName: string;
   productName: string;
   quantity: number;
@@ -256,6 +258,19 @@ export const db = {
 };
 
 // ==================== 헬퍼 함수 ====================
+
+/** UUID v4 생성 — crypto.randomUUID 우선, 미지원 환경(IE/오래된 sw)에선 fallback */
+export function generateClientId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  // RFC4122 v4 fallback (Math.random 기반 — 충돌 가능성 매우 낮음)
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
 
 /** 현재 로컬 시간 → 'YYYY-MM-DD HH:mm:ss' */
 export function nowLocalString(): string {

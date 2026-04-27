@@ -26,11 +26,14 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
+  const url = event.request.url;
+
   if (
     event.request.method !== 'GET' ||
-    event.request.url.includes('supabase') ||
-    event.request.url.includes('/rest/') ||
-    event.request.url.includes('/auth/')
+    !(url.startsWith('http://') || url.startsWith('https://')) ||
+    url.includes('supabase') ||
+    url.includes('/rest/') ||
+    url.includes('/auth/')
   ) {
     return;
   }
@@ -38,9 +41,11 @@ self.addEventListener('fetch', (event) => {
   event.respondWith(
     fetch(event.request)
       .then((response) => {
-        if (response.status === 200) {
+        if (response.status === 200 && response.type !== 'opaque') {
           const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+          caches.open(CACHE_NAME)
+            .then((cache) => cache.put(event.request, clone))
+            .catch(() => { /* cache.put can reject for unsupported schemes — ignore */ });
         }
         return response;
       })

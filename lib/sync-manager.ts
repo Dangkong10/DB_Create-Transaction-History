@@ -1,4 +1,4 @@
-import { db, nowLocalString, setLastSyncTime, type LocalTransaction, type SyncQueueItem } from './offline-db';
+import { db, nowLocalString, generateClientId, setLastSyncTime, type LocalTransaction, type SyncQueueItem } from './offline-db';
 import { supabase, getSession, type Transaction } from './supabase';
 
 // ==================== 타입 ====================
@@ -64,13 +64,15 @@ export function subscribeSyncStatus(fn: SyncListener): () => void {
  * 거래 데이터를 로컬에 저장하고 동기화 큐에 추가
  */
 export async function saveTransactionOffline(
-  txn: Omit<LocalTransaction, 'localId' | 'syncStatus' | 'createdAt' | 'updatedAt'>
+  txn: Omit<LocalTransaction, 'localId' | 'syncStatus' | 'createdAt' | 'updatedAt' | 'clientId'>
 ): Promise<LocalTransaction> {
   const now = new Date().toISOString();
   const createdAt = nowLocalString();
+  const clientId = generateClientId();
 
   const localId = await db.transactions.add({
     ...txn,
+    clientId,
     createdAt,
     updatedAt: now,
     syncStatus: 'pending',
@@ -82,6 +84,7 @@ export async function saveTransactionOffline(
     action: 'create',
     localId,
     data: {
+      clientId,
       customerName: txn.customerName,
       productName: txn.productName,
       quantity: txn.quantity,
@@ -223,40 +226,55 @@ async function processQueueItem(
 
   switch (item.action) {
     case 'create': {
-      // 로컬 createdAt을 ISO로 변환 (재시도 시 동일값 사용 → 멱등성 확보)
       const createdAtISO = localDateStringToISO(item.data.createdAt);
+      const clientId = item.data.clientId;
 
-      // 멱등성 체크: 이미 동일 거래가 서버에 있는지 확인 (이전 재시도에서 서버에 생성됐을 가능성)
-      const { data: existing, error: checkError } = await supabase
-        .from('transactions')
-        .select('id')
-        .eq('user_id', userId)
-        .eq('customer_name', item.data.customerName)
-        .eq('product_name', item.data.productName)
-        .eq('quantity', item.data.quantity)
-        .eq('date', item.data.date)
-        .eq('created_at', createdAtISO)
-        .limit(1);
+      // 멱등성 체크: client_id가 있으면 그것만으로 충분.
+      // (없는 옛 큐 항목은 데이터 필드 + created_at 매칭으로 fallback)
+      let existingId: string | number | null = null;
 
-      if (checkError) throw checkError;
+      if (clientId) {
+        const { data: existing, error: checkError } = await supabase
+          .from('transactions')
+          .select('id')
+          .eq('user_id', userId)
+          .eq('client_id', clientId)
+          .limit(1);
+        if (checkError) throw checkError;
+        if (existing && existing.length > 0) existingId = existing[0].id;
+      } else {
+        const { data: existing, error: checkError } = await supabase
+          .from('transactions')
+          .select('id')
+          .eq('user_id', userId)
+          .eq('customer_name', item.data.customerName)
+          .eq('product_name', item.data.productName)
+          .eq('quantity', item.data.quantity)
+          .eq('date', item.data.date)
+          .eq('created_at', createdAtISO)
+          .limit(1);
+        if (checkError) throw checkError;
+        if (existing && existing.length > 0) existingId = existing[0].id;
+      }
 
-      if (existing && existing.length > 0) {
-        // 이전 재시도에서 서버에 생성됨 → 로컬만 연결하고 INSERT 스킵
+      if (existingId !== null) {
+        // 이전 재시도에서 서버에 이미 생성됨 → 로컬만 연결하고 INSERT 스킵
         if (item.localId) {
           await db.transactions.update(item.localId, {
-            serverId: String(existing[0].id),
+            serverId: String(existingId),
             syncStatus: 'synced',
           });
         }
-        console.log('[Sync] CREATE 스킵 (이미 존재):', existing[0].id);
+        console.log('[Sync] CREATE 스킵 (이미 존재):', existingId);
         break;
       }
 
-      // 새로 INSERT (createdAt 명시 → 재시도 시 동일 값이 서버에 들어가 중복 체크가 동작)
+      // 새로 INSERT (client_id로 unique 제약 — 재시도 시 ON CONFLICT 발생해도 위 체크가 잡아줌)
       const { data, error } = await supabase
         .from('transactions')
         .insert({
           user_id: userId,
+          client_id: clientId ?? null,
           customer_name: item.data.customerName,
           product_name: item.data.productName,
           quantity: item.data.quantity,
@@ -335,12 +353,14 @@ export async function pullFromServer(): Promise<Transaction[]> {
   // 서버 데이터를 로컬에 병합 (last-write-wins)
   for (const row of data) {
     const serverId = String(row.id);
+    const rowClientId: string | undefined = row.client_id ?? undefined;
     const existing = await db.transactions.findByServerId(serverId);
     const serverUpdatedAt = row.updated_at || row.created_at;
 
     if (existing) {
       if (!existing.updatedAt || new Date(serverUpdatedAt) >= new Date(existing.updatedAt)) {
         await db.transactions.update(existing.localId!, {
+          clientId: rowClientId ?? existing.clientId,
           customerName: row.customer_name,
           productName: row.product_name,
           quantity: row.quantity,
@@ -353,19 +373,25 @@ export async function pullFromServer(): Promise<Transaction[]> {
       }
     } else {
       // pending 상태의 동일 거래가 있는지 확인 (레이스 컨디션 방지)
+      // 1순위: client_id 일치, 2순위: 데이터 필드 매칭 (옛 데이터 fallback)
       const pendingAll = await db.transactions.findBySyncStatus('pending');
-      const matchingPending = pendingAll.find(p =>
-        p.customerName === row.customer_name &&
-        p.productName === row.product_name &&
-        p.quantity === row.quantity &&
-        p.date === row.date &&
-        !p.serverId
-      );
+      const matchingPending =
+        (rowClientId
+          ? pendingAll.find(p => p.clientId === rowClientId && !p.serverId)
+          : undefined) ||
+        pendingAll.find(p =>
+          !p.clientId && // client_id 있는 항목은 위에서만 매칭
+          p.customerName === row.customer_name &&
+          p.productName === row.product_name &&
+          p.quantity === row.quantity &&
+          p.date === row.date &&
+          !p.serverId
+        );
 
       if (matchingPending && matchingPending.localId != null) {
-        // pending 항목에 serverId 연결
         await db.transactions.update(matchingPending.localId, {
           serverId,
+          clientId: rowClientId ?? matchingPending.clientId,
           customerName: row.customer_name,
           productName: row.product_name,
           quantity: row.quantity,
@@ -378,6 +404,7 @@ export async function pullFromServer(): Promise<Transaction[]> {
       } else {
         await db.transactions.add({
           serverId,
+          clientId: rowClientId,
           customerName: row.customer_name,
           productName: row.product_name,
           quantity: row.quantity,
