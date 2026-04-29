@@ -33,7 +33,9 @@ export interface SyncQueueItem {
 // ==================== IndexedDB 래퍼 ====================
 
 const DB_NAME = 'transactionsDB';
-const DB_VERSION = 1;
+// 동일 origin 에 과거 빌드가 v10 까지 올려둔 흔적이 남아있어 v1 로 열면 VersionError 발생.
+// onupgradeneeded 가 if-not-contains 로 보호돼 있어 더 높은 버전에서도 안전하게 동작.
+const DB_VERSION = 11;
 
 let dbInstance: IDBDatabase | null = null;
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import {
   View,
   Text,
@@ -8,10 +8,14 @@ import {
   ActivityIndicator,
   Platform,
   Keyboard,
+  type NativeSyntheticEvent,
+  type NativeScrollEvent,
 } from "react-native";
+import "../custom-scrollbar.css";
 import { MaterialIcons } from "@expo/vector-icons";
 import { ScreenContainer } from "@/components/screen-container";
 import { ResponsiveContainer } from "@/components/responsive-container";
+import { ScrollToTopFab } from "@/components/scroll-to-top-fab";
 import { useToast } from "@/lib/toast-provider";
 import { type Transaction } from "@/lib/supabase";
 import { pullFromServer, getLocalTransactions } from "@/lib/sync-manager";
@@ -35,6 +39,17 @@ export default function ReceiptScreen() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [customerQuery, setCustomerQuery] = useState("");
+  const scrollViewRef = useRef<ScrollView>(null);
+  const [showScrollTop, setShowScrollTop] = useState(false);
+
+  const handleScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const y = e.nativeEvent.contentOffset.y;
+    setShowScrollTop(y > 200);
+  };
+
+  const handleScrollToTop = () => {
+    scrollViewRef.current?.scrollTo({ y: 0, animated: true });
+  };
 
   const loadData = async () => {
     try {
@@ -225,8 +240,15 @@ export default function ReceiptScreen() {
 
   return (
     <ScreenContainer style={{ backgroundColor: '#f5f5f5' }}>
-      <ResponsiveContainer>
-        <ScrollView contentContainerStyle={{ flexGrow: 1, padding: 20, paddingBottom: 100 }}>
+      <ResponsiveContainer className="flex-1">
+        <ScrollView
+          ref={scrollViewRef}
+          onScroll={handleScroll}
+          scrollEventThrottle={16}
+          className="custom-scrollbar"
+          contentContainerStyle={{ flexGrow: 1, padding: 20, paddingBottom: 100 }}
+          style={Platform.OS === 'web' ? ({ flex: 1, minHeight: 0, maxHeight: '100%' } as any) : { flex: 1 }}
+        >
           <View style={{ gap: 20 }}>
             {/* 타이틀 */}
             <View>
@@ -476,6 +498,7 @@ export default function ReceiptScreen() {
 
           </View>
         </ScrollView>
+        <ScrollToTopFab visible={showScrollTop} onPress={handleScrollToTop} />
       </ResponsiveContainer>
     </ScreenContainer>
   );

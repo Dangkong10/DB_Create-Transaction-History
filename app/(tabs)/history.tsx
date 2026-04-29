@@ -6,11 +6,15 @@ import {
   TouchableOpacity,
   TextInput,
   Platform,
+  type NativeSyntheticEvent,
+  type NativeScrollEvent,
 } from "react-native";
+import "../custom-scrollbar.css";
 import { MaterialIcons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { ScreenContainer } from "@/components/screen-container";
 import { ResponsiveContainer } from "@/components/responsive-container";
+import { ScrollToTopFab } from "@/components/scroll-to-top-fab";
 import { useColors } from "@/hooks/use-colors";
 import { useToast } from "@/lib/toast-provider";
 import { useConfirm } from "@/lib/confirm-provider";
@@ -55,6 +59,17 @@ export default function HistoryScreen() {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [calendarOpen, setCalendarOpen] = useState(false);
   const calendarWrapperRef = useRef<View>(null);
+  const scrollViewRef = useRef<ScrollView>(null);
+  const [showScrollTop, setShowScrollTop] = useState(false);
+
+  const handleScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const y = e.nativeEvent.contentOffset.y;
+    setShowScrollTop(y > 200);
+  };
+
+  const handleScrollToTop = () => {
+    scrollViewRef.current?.scrollTo({ y: 0, animated: true });
+  };
   const [searchQuery, setSearchQuery] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<{
@@ -452,8 +467,12 @@ export default function HistoryScreen() {
     <ScreenContainer style={{ backgroundColor: '#f5f5f5' }}>
       <ResponsiveContainer className="flex-1">
         <ScrollView
+          ref={scrollViewRef}
+          onScroll={handleScroll}
+          scrollEventThrottle={16}
+          className="custom-scrollbar"
           contentContainerStyle={{ padding: 20, paddingBottom: 100 }}
-          style={{ flex: 1 }}
+          style={Platform.OS === 'web' ? ({ flex: 1, minHeight: 0, maxHeight: '100%' } as any) : { flex: 1 }}
         >
           {/* 로그인 정보 헤더 — mount 전엔 빈 공간으로 hydration mismatch 방지 */}
           <View style={{ flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', marginBottom: 12, gap: 12, minHeight: 20 }}>
@@ -824,6 +843,7 @@ export default function HistoryScreen() {
               )}
             </View>
         </ScrollView>
+        <ScrollToTopFab visible={showScrollTop} onPress={handleScrollToTop} />
       </ResponsiveContainer>
       <PeriodExportModal
         visible={periodModalOpen}

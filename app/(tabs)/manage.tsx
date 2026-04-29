@@ -1,21 +1,23 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
   TextInput,
   TouchableOpacity,
-  FlatList,
-  Alert,
   Platform,
   ScrollView,
   ActivityIndicator,
   Modal,
+  type NativeSyntheticEvent,
+  type NativeScrollEvent,
 } from "react-native";
+import "../custom-scrollbar.css";
 import * as Haptics from "expo-haptics";
 import { useLocalSearchParams } from "expo-router";
 
 import { ScreenContainer } from "@/components/screen-container";
 import { ResponsiveContainer } from "@/components/responsive-container";
+import { ScrollToTopFab } from "@/components/scroll-to-top-fab";
 import { useToast } from "@/lib/toast-provider";
 import { useConfirm } from "@/lib/confirm-provider";
 import type { Customer, Product, ProductCategory } from "@/lib/types";
@@ -86,6 +88,15 @@ export default function ManageScreen() {
 
   const { user, logout, refresh: refreshAuth } = useAuth();
   const mounted = useIsMounted();
+  const scrollViewRef = useRef<ScrollView>(null);
+  const [showScrollTop, setShowScrollTop] = useState(false);
+
+  const handleScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    setShowScrollTop(e.nativeEvent.contentOffset.y > 200);
+  };
+  const handleScrollToTop = () => {
+    scrollViewRef.current?.scrollTo({ y: 0, animated: true });
+  };
 
   const [migrationLoading, setMigrationLoading] = useState(false);
   const [localCacheCounts, setLocalCacheCounts] = useState<{ customers: number; products: number } | null>(null);
@@ -435,6 +446,14 @@ export default function ManageScreen() {
   return (
     <ScreenContainer style={{ backgroundColor: '#f5f5f5' }}>
       <ResponsiveContainer className="flex-1">
+        <ScrollView
+          ref={scrollViewRef}
+          onScroll={handleScroll}
+          scrollEventThrottle={16}
+          className="custom-scrollbar"
+          contentContainerStyle={{ paddingBottom: 100 }}
+          style={Platform.OS === 'web' ? ({ flex: 1, minHeight: 0, maxHeight: '100%' } as any) : { flex: 1 }}
+        >
         <View style={{ padding: 20, paddingBottom: 0 }}>
           {/* 로그인 정보 — mount 전엔 빈 공간으로 hydration mismatch 방지 */}
           <View style={{ flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', marginBottom: 12, gap: 12, minHeight: 20 }}>
@@ -491,7 +510,7 @@ export default function ManageScreen() {
 
         {/* 거래처 관리 */}
         {activeTab === "customers" && (
-          <View style={{ flex: 1, paddingHorizontal: 20 }}>
+          <View style={{ paddingHorizontal: 20 }}>
             {/* 추가 폼 */}
             <View style={{
               backgroundColor: '#ffffff', borderRadius: 14, padding: 16, marginBottom: 16,
@@ -568,15 +587,19 @@ export default function ManageScreen() {
 
             {/* 거래처 목록 */}
             <Text style={{ fontSize: 18, fontWeight: '600', color: '#1B365D', marginBottom: 8 }}>거래처 목록</Text>
-            <FlatList
-              data={customers}
-              keyExtractor={(item) => item.id}
-              contentContainerStyle={{ paddingBottom: 100 }}
-              renderItem={({ item }) => (
-                <View style={{
-                  backgroundColor: '#ffffff', borderRadius: 14, padding: 16, marginBottom: 8,
-                  borderWidth: 1, borderColor: '#e0e0e0', ...SHADOW,
-                }}>
+            {customers.length === 0 ? (
+              <Text style={{ color: '#666666', textAlign: 'center', paddingVertical: 32 }}>
+                등록된 거래처가 없습니다.
+              </Text>
+            ) : (
+              customers.map((item) => (
+                <View
+                  key={item.id}
+                  style={{
+                    backgroundColor: '#ffffff', borderRadius: 14, padding: 16, marginBottom: 8,
+                    borderWidth: 1, borderColor: '#e0e0e0', ...SHADOW,
+                  }}
+                >
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                     <View style={{ flex: 1 }}>
                       <Text style={{ fontSize: 16, fontWeight: '500', color: '#1B365D' }}>
@@ -599,19 +622,14 @@ export default function ManageScreen() {
                     </View>
                   </View>
                 </View>
-              )}
-              ListEmptyComponent={
-                <Text style={{ color: '#666666', textAlign: 'center', paddingVertical: 32 }}>
-                  등록된 거래처가 없습니다.
-                </Text>
-              }
-            />
+              ))
+            )}
           </View>
         )}
 
         {/* 제품 관리 */}
         {activeTab === "products" && (
-          <ScrollView style={{ flex: 1, paddingHorizontal: 20 }} contentContainerStyle={{ paddingBottom: 100 }}>
+          <View style={{ paddingHorizontal: 20 }}>
             {/* 추가 폼 */}
             <View style={{
               backgroundColor: '#ffffff', borderRadius: 14, padding: 16, marginBottom: 16,
@@ -845,12 +863,12 @@ export default function ManageScreen() {
                 등록된 제품이 없습니다.
               </Text>
             )}
-          </ScrollView>
+          </View>
         )}
 
         {/* 설정 */}
         {activeTab === "settings" && (
-          <ScrollView style={{ flex: 1, paddingHorizontal: 20 }} contentContainerStyle={{ paddingBottom: 100 }}>
+          <View style={{ paddingHorizontal: 20 }}>
             <View style={{
               backgroundColor: '#ffffff', borderRadius: 14, padding: 16,
               borderWidth: 1, borderColor: '#e0e0e0', ...SHADOW,
@@ -919,8 +937,10 @@ export default function ManageScreen() {
                 </TouchableOpacity>
               </View>
             )}
-          </ScrollView>
+          </View>
         )}
+        </ScrollView>
+        <ScrollToTopFab visible={showScrollTop} onPress={handleScrollToTop} />
       </ResponsiveContainer>
 
       {/* 엑셀 가져오기 미리보기 모달 */}
