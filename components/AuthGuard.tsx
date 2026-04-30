@@ -26,6 +26,10 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
   const pathnameRef = useRef(pathname);
   pathnameRef.current = pathname;
 
+  // 직전에 인증된 user.id. SIGNED_OUT 시에는 비우지 않아 "앱 유지" 후 다른 계정으로
+  // 곧바로 로그인하는 경우에도 이전 사용자의 로컬 캐시가 남지 않도록 비교 가능.
+  const lastUserIdRef = useRef<string | null>(null);
+
   const goToLogin = useCallback(() => {
     setStaleSession(false);
     router.replace('/login');
@@ -78,7 +82,23 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
   }, [router]);
 
   useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      const newUserId = session?.user?.id ?? null;
+
+      // 다른 user.id 로 새 세션이 붙으면(=계정 전환) 이전 사용자의 로컬 캐시 소거.
+      // 명시적 로그아웃 경로(handleSignedOut)와 별개로, "앱 유지" 후 곧바로 다른 계정으로
+      // 로그인하는 빈틈을 막기 위함.
+      if (newUserId) {
+        if (lastUserIdRef.current && lastUserIdRef.current !== newUserId) {
+          try {
+            await wipeAllLocalData();
+          } catch (err) {
+            console.error('[AuthGuard] 계정 전환 시 로컬 데이터 소거 실패:', err);
+          }
+        }
+        lastUserIdRef.current = newUserId;
+      }
+
       if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && session) {
         setStaleSession(false);
         return;
