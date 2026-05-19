@@ -30,11 +30,18 @@ export const unstable_settings = {
 };
 
 export default function RootLayout() {
-  const initialInsets = initialWindowMetrics?.insets ?? DEFAULT_WEB_INSETS;
-  const initialFrame = initialWindowMetrics?.frame ?? DEFAULT_WEB_FRAME;
+  // SSG와 첫 client render가 일치하도록 항상 DEFAULT 값으로 시작.
+  // initialWindowMetrics는 module-load 시점에 평가되는데 SSG=null, client=window 기반 값으로 다르기 때문.
+  // 실제 값은 mount 후 useEffect에서 동기화한다 (React #418 방지).
+  const [insets, setInsets] = useState<EdgeInsets>(DEFAULT_WEB_INSETS);
+  const [frame, setFrame] = useState<Rect>(DEFAULT_WEB_FRAME);
 
-  const [insets, setInsets] = useState<EdgeInsets>(initialInsets);
-  const [frame, setFrame] = useState<Rect>(initialFrame);
+  useEffect(() => {
+    if (initialWindowMetrics) {
+      setInsets(initialWindowMetrics.insets);
+      setFrame(initialWindowMetrics.frame);
+    }
+  }, []);
 
   // Initialize Manus runtime for cookie injection from parent container
   useEffect(() => {
@@ -69,18 +76,19 @@ export default function RootLayout() {
   );
 
 
-  // Ensure minimum 8px padding for top and bottom on mobile
-  const providerInitialMetrics = useMemo(() => {
-    const metrics = initialWindowMetrics ?? { insets: initialInsets, frame: initialFrame };
-    return {
-      ...metrics,
+  // SafeAreaProvider 의 initialMetrics 도 SSG/client 일관되게 DEFAULT 기반으로.
+  // (initialWindowMetrics 직접 참조 시 frame.width/height 가 module-load 시점에 평가돼 SSG와 어긋남)
+  const providerInitialMetrics = useMemo(
+    () => ({
       insets: {
-        ...metrics.insets,
-        top: Math.max(metrics.insets.top, 16),
-        bottom: Math.max(metrics.insets.bottom, 12),
+        ...DEFAULT_WEB_INSETS,
+        top: Math.max(DEFAULT_WEB_INSETS.top, 16),
+        bottom: Math.max(DEFAULT_WEB_INSETS.bottom, 12),
       },
-    };
-  }, [initialInsets, initialFrame]);
+      frame: DEFAULT_WEB_FRAME,
+    }),
+    [],
+  );
 
   const content = (
     <GestureHandlerRootView style={{ flex: 1 }}>

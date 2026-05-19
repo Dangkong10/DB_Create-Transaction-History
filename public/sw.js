@@ -1,4 +1,6 @@
-const CACHE_NAME = 'transaction-record-v2';
+// v3: fetch handler 가 undefined 를 respondWith 하지 않도록 fallback 추가.
+//     Cache name 도 bump 해서 이전 v2 캐시(잘못된 응답을 들고 있을 수 있음)는 activate 시 정리.
+const CACHE_NAME = 'transaction-record-v3';
 
 const PRECACHE_URLS = [
   '/',
@@ -49,6 +51,12 @@ self.addEventListener('fetch', (event) => {
         }
         return response;
       })
-      .catch(() => caches.match(event.request))
+      .catch(async () => {
+        // 오프라인 fallback. caches.match() 가 undefined 면 respondWith 가 깨지므로
+        // 빈 503 Response 로 graceful fallback.
+        const cached = await caches.match(event.request);
+        if (cached) return cached;
+        return new Response('', { status: 503, statusText: 'Service Unavailable (offline)' });
+      })
   );
 });
