@@ -25,9 +25,12 @@ import { initManusRuntime, subscribeSafeAreaInsets } from "@/lib/_core/manus-run
 const DEFAULT_WEB_INSETS: EdgeInsets = { top: 0, right: 0, bottom: 0, left: 0 };
 const DEFAULT_WEB_FRAME: Rect = { x: 0, y: 0, width: 0, height: 0 };
 
-export const unstable_settings = {
-  anchor: "(tabs)",
-};
+// unstable_settings.anchor 는 의도적으로 *설정하지 않음*.
+//   anchor 를 두면 expo-router 가 SSG 시 모든 라우트 HTML 에 anchor route 트리를
+//   미리 박아 넣고(예: /login.html 안에 (tabs)/index 의 입력 화면 전체가 display:none
+//   상태로 들어감), 클라이언트 hydrate 단계에서 그 트리가 어긋나 React #418
+//   (hydration mismatch) 가 발생. login → router.replace('/') 흐름에는 anchor 가
+//   불필요하므로 제거.
 
 export default function RootLayout() {
   // SSG와 첫 client render가 일치하도록 항상 DEFAULT 값으로 시작.
