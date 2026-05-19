@@ -11,8 +11,18 @@ type ThemeContextValue = {
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const systemScheme = useSystemColorScheme() ?? "light";
-  const [colorScheme, setColorSchemeState] = useState<ColorScheme>(systemScheme);
+  // SSG와 첫 client render가 일치하도록 항상 "light"로 시작.
+  // 시스템 다크모드는 mount 이후 useEffect에서 동기화한다 (React #418 방지).
+  const systemScheme = useSystemColorScheme();
+  const [colorScheme, setColorSchemeState] = useState<ColorScheme>("light");
+
+  useEffect(() => {
+    if (systemScheme && systemScheme !== colorScheme) {
+      setColorSchemeState(systemScheme);
+    }
+    // colorScheme은 의도적으로 deps에서 제외 — 사용자가 setColorScheme으로 바꾼 값을 시스템 변경이 덮어쓰지 않도록.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [systemScheme]);
 
   const applyScheme = useCallback((scheme: ColorScheme) => {
     // Apply color scheme to React Native Appearance API
