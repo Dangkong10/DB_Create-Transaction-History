@@ -294,6 +294,76 @@ export async function getPendingCustomers(): Promise<PendingCustomerRow[]> {
   return rows;
 }
 
+/**
+ * 입금 입력 모달용 — 특정 날짜 D 시점의 누적 미수금이 있는 거래처 리스트.
+ *
+ *   balance(D) = SUM(매출 ≤ D) - SUM(입금 ≤ D) + SUM(조정 ≤ D)
+ *
+ *   - 양수 미수금만 포함 (음수=선입금 상태는 모달에 안 보임)
+ *   - 가나다순 정렬 (ko-KR)
+ *
+ * 입금 입력 화면에서 헤더 "~ YYYY-MM-DD" 의 기준이 되는 잔고를 계산.
+ */
+export async function getPendingCustomersAsOfDate(
+  date: string,
+): Promise<PendingCustomerRow[]> {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    throw new Error(`날짜 형식 오류 (YYYY-MM-DD): ${date}`);
+  }
+
+  const userId = await getUserIdOrThrow();
+
+  const { data: txRows, error: txErr } = await supabase
+    .from('transactions')
+    .select('customer_name, quantity, unit_price')
+    .eq('user_id', userId)
+    .lte('date', date);
+  if (txErr) throw new Error(`매출 조회 실패: ${txErr.message}`);
+
+  const { data: payRows, error: payErr } = await supabase
+    .from('payments')
+    .select('customer_name, amount')
+    .eq('user_id', userId)
+    .lte('payment_date', date);
+  if (payErr) throw new Error(`입금 조회 실패: ${payErr.message}`);
+
+  let adjRows: { customer_name: string; amount: number }[] = [];
+  {
+    const { data, error } = await supabase
+      .from('adjustments')
+      .select('customer_name, amount')
+      .eq('user_id', userId)
+      .lte('adjustment_date', date);
+    if (error) {
+      console.warn(
+        '[getPendingCustomersAsOfDate] adjustments fetch 실패 (0으로 처리):',
+        error.message,
+      );
+    } else {
+      adjRows = data ?? [];
+    }
+  }
+
+  const map = new Map<string, number>();
+  for (const r of txRows ?? []) {
+    const amount = (r.quantity ?? 0) * (r.unit_price ?? 0);
+    map.set(r.customer_name, (map.get(r.customer_name) ?? 0) + amount);
+  }
+  for (const r of payRows ?? []) {
+    map.set(r.customer_name, (map.get(r.customer_name) ?? 0) - (r.amount ?? 0));
+  }
+  for (const r of adjRows) {
+    map.set(r.customer_name, (map.get(r.customer_name) ?? 0) + (r.amount ?? 0));
+  }
+
+  const rows: PendingCustomerRow[] = [];
+  for (const [name, balance] of map) {
+    if (balance > 0) rows.push({ customerName: name, outstanding: balance });
+  }
+  rows.sort((a, b) => a.customerName.localeCompare(b.customerName, 'ko-KR'));
+  return rows;
+}
+
 // ==================== 입금 저장 ====================
 
 /**

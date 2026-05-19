@@ -26,7 +26,7 @@ import {
 import { useToast } from '@/lib/toast-provider';
 import { useConfirm } from '@/lib/confirm-provider';
 import {
-  getPendingCustomers,
+  getPendingCustomersAsOfDate,
   savePayments,
   type PendingCustomerRow,
   type PaymentInput,
@@ -74,7 +74,13 @@ export function DepositInputModal({ visible, onClose, onSaved }: Props) {
   const { showToast } = useToast();
   const { showConfirm } = useConfirm();
 
+  /** 사용자가 인풋·"어제"·"오늘" 버튼으로 *편집 중*인 날짜 */
   const [paymentDate, setPaymentDate] = useState<string>(yesterdayStr());
+  /**
+   * 실제로 미수금 계산에 *적용된* 날짜 (= 헤더 "~ {effectiveDate}" 의 기준).
+   * 모달 열림 시 yesterdayStr() 로 초기화되고, 그 외에는 [확인] 클릭 시에만 갱신.
+   */
+  const [effectiveDate, setEffectiveDate] = useState<string>(yesterdayStr());
   const [pendingRows, setPendingRows] = useState<PendingCustomerRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -85,28 +91,30 @@ export function DepositInputModal({ visible, onClose, onSaved }: Props) {
   /** 조정 모달 — 현재 조정 중인 거래처 (null이면 닫힘) */
   const [adjustingRow, setAdjustingRow] = useState<PendingCustomerRow | null>(null);
 
-  /** 미수 거래처 재로드 — 조정 후 미수금 갱신용 */
+  /** 미수 거래처 재로드 — 조정 후 미수금 갱신용. effectiveDate 기준. */
   const reloadPending = useCallback(async () => {
     try {
-      const rows = await getPendingCustomers();
+      const rows = await getPendingCustomersAsOfDate(effectiveDate);
       setPendingRows(rows);
     } catch (err) {
       console.error('[DepositInputModal] reload error:', err);
     }
-  }, []);
+  }, [effectiveDate]);
 
   /** 모달 열릴 때마다 미수 거래처 로드 + 상태 초기화 */
   useEffect(() => {
     if (!visible) return;
 
-    setPaymentDate(yesterdayStr());
+    const initial = yesterdayStr();
+    setPaymentDate(initial);
+    setEffectiveDate(initial);
     setInputs({});
     setFullClicked(new Set());
     setLoading(true);
 
-    getPendingCustomers()
-      .then((rows) => setPendingRows(rows))
-      .catch((err) => {
+    getPendingCustomersAsOfDate(initial)
+      .then((rows: PendingCustomerRow[]) => setPendingRows(rows))
+      .catch((err: any) => {
         console.error('[DepositInputModal] load error:', err);
         showToast(`미수 거래처 로드 실패: ${err.message ?? err}`, 'error');
         setPendingRows([]);
@@ -119,6 +127,31 @@ export function DepositInputModal({ visible, onClose, onSaved }: Props) {
   const handleQuickDate = useCallback((preset: 'yesterday' | 'today') => {
     setPaymentDate(preset === 'yesterday' ? yesterdayStr() : todayStr());
   }, []);
+
+  /** [확인] 버튼 — paymentDate 를 effectiveDate 로 적용하고 그 시점의 미수금 재로드 */
+  const handleApplyDate = useCallback(async () => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(paymentDate)) {
+      showToast('날짜 형식이 잘못되었습니다 (YYYY-MM-DD).', 'error');
+      return;
+    }
+    if (paymentDate > todayStr()) {
+      showToast('미래 날짜는 선택할 수 없습니다.', 'error');
+      return;
+    }
+    setLoading(true);
+    try {
+      const rows = await getPendingCustomersAsOfDate(paymentDate);
+      setPendingRows(rows);
+      setEffectiveDate(paymentDate);
+      setInputs({});
+      setFullClicked(new Set());
+    } catch (err: any) {
+      console.error('[DepositInputModal] apply date error:', err);
+      showToast(`미수 거래처 로드 실패: ${err.message ?? err}`, 'error');
+    } finally {
+      setLoading(false);
+    }
+  }, [paymentDate, showToast]);
 
   const handleFullPayment = useCallback(
     (customerName: string, outstanding: number) => {
@@ -153,6 +186,12 @@ export function DepositInputModal({ visible, onClose, onSaved }: Props) {
     }
     if (paymentDate > todayStr()) {
       showToast('미래 날짜로는 입금을 입력할 수 없습니다.', 'error');
+      return;
+    }
+    // 화면에 표시된 미수금(effectiveDate 기준)과 저장하려는 paymentDate 가 다르면
+    // 사용자가 [확인] 을 누르지 않은 채 저장을 시도한 것 → 잔고 오인 방지.
+    if (paymentDate !== effectiveDate) {
+      showToast('입금 날짜를 바꾼 뒤 [확인] 을 먼저 눌러주세요.', 'error');
       return;
     }
 
@@ -224,7 +263,7 @@ export function DepositInputModal({ visible, onClose, onSaved }: Props) {
     } else {
       await doSave();
     }
-  }, [paymentDate, pendingRows, inputs, showToast, showConfirm, onSaved, onClose]);
+  }, [paymentDate, effectiveDate, pendingRows, inputs, showToast, showConfirm, onSaved, onClose]);
 
   // ===== 파생 =====
 
@@ -364,6 +403,32 @@ export function DepositInputModal({ visible, onClose, onSaved }: Props) {
                 오늘
               </Text>
             </TouchableOpacity>
+            {/* [확인] — paymentDate 를 effectiveDate 로 적용. 미적용 상태에선 강조. */}
+            <TouchableOpacity
+              onPress={handleApplyDate}
+              disabled={paymentDate === effectiveDate || loading}
+              style={{
+                paddingHorizontal: 12,
+                paddingVertical: 6,
+                borderRadius: 6,
+                backgroundColor:
+                  paymentDate === effectiveDate ? '#cbd5e1' : '#1B365D',
+                borderWidth: 1,
+                borderColor:
+                  paymentDate === effectiveDate ? '#cbd5e1' : '#1B365D',
+                opacity: loading ? 0.6 : 1,
+              }}
+            >
+              <Text
+                style={{
+                  fontSize: 12,
+                  color: '#fff',
+                  fontWeight: '700',
+                }}
+              >
+                확인
+              </Text>
+            </TouchableOpacity>
             <Text
               style={{
                 marginLeft: 'auto',
@@ -413,7 +478,7 @@ export function DepositInputModal({ visible, onClose, onSaved }: Props) {
                     textAlign: 'right',
                   }}
                 >
-                  현재 미수금
+                  ~ {effectiveDate}
                 </Text>
                 <Text
                   style={{
