@@ -7,6 +7,7 @@
 import { openPrintModal, formatNumber } from './print-preview';
 import { aggregateDailySummary, type DailySummaryRow } from './daily-summary-excel';
 import type { Transaction } from './excel-utils';
+import { getReceiptBalancesForDate } from './payments';
 
 /**
  * 당일 집계표 미리보기 모달 열기
@@ -25,8 +26,19 @@ export async function openDailySummaryPreview(
   // 집계 데이터 생성
   const rows = aggregateDailySummary(filtered, getUnitPrice);
 
+  // 전잔고 조회 (실패해도 집계표는 정상 출력, 전잔고만 빈 채로)
+  const balances = new Map<string, number>();
+  try {
+    const balanceMap = await getReceiptBalancesForDate(dateStr);
+    for (const [name, b] of balanceMap) {
+      balances.set(name, b.previousBalance);
+    }
+  } catch (err) {
+    console.warn('[openDailySummaryPreview] 전잔고 조회 실패 (집계표는 그대로 출력):', err);
+  }
+
   // HTML 생성
-  const contentHtml = buildDailySummaryHtml(rows, dateStr);
+  const contentHtml = buildDailySummaryHtml(rows, dateStr, balances);
 
   openPrintModal({
     title: `📊 ${dateStr} 당일 집계표`,
@@ -41,23 +53,32 @@ export async function openDailySummaryPreview(
 /**
  * HTML 생성
  */
-function buildDailySummaryHtml(rows: DailySummaryRow[], dateStr: string): string {
-  // 합계 행 계산 (전잔고는 수기 입력이므로 0으로 시작)
+function buildDailySummaryHtml(
+  rows: DailySummaryRow[],
+  dateStr: string,
+  balances: Map<string, number>,
+): string {
+  // 합계 (전잔고는 거래처별 자동 채움)
   let totalSales = 0;
+  let totalPrev = 0;
   rows.forEach((r) => {
     totalSales += r.salesAmount;
+    totalPrev += balances.get(r.customerName) ?? 0;
   });
+  const totalBalance = totalPrev + totalSales;
 
   const dataRowsHtml = rows
-    .map(
-      (r, i) => `
+    .map((r, i) => {
+      const prev = balances.get(r.customerName) ?? 0;
+      const total = prev + r.salesAmount;
+      return `
     <tr>
       <td style="text-align:left; padding-left:6px;" contenteditable="true">${r.customerName}</td>
-      <td style="text-align:right; padding-right:6px;" contenteditable="true" data-row="${i}" data-col="prev"></td>
+      <td style="text-align:right; padding-right:6px;" contenteditable="true" data-row="${i}" data-col="prev">${prev > 0 ? formatNumber(prev) : ''}</td>
       <td style="text-align:right; padding-right:6px;" contenteditable="true" data-row="${i}" data-col="sales">${r.salesAmount > 0 ? formatNumber(r.salesAmount) : ''}</td>
-      <td style="text-align:right; padding-right:6px; font-weight:700; color:#1B365D;" data-row="${i}" data-col="total">${r.salesAmount > 0 ? formatNumber(r.salesAmount) : ''}</td>
-    </tr>`,
-    )
+      <td style="text-align:right; padding-right:6px; font-weight:700; color:#1B365D;" data-row="${i}" data-col="total">${total > 0 ? formatNumber(total) : ''}</td>
+    </tr>`;
+    })
     .join('');
 
   return `
@@ -82,9 +103,9 @@ function buildDailySummaryHtml(rows: DailySummaryRow[], dateStr: string): string
         <tfoot>
           <tr style="background:#f0f0f0; font-weight:800;">
             <td style="text-align:center;">합계</td>
-            <td style="text-align:right; padding-right:6px;" id="ds-total-prev"></td>
+            <td style="text-align:right; padding-right:6px;" id="ds-total-prev">${totalPrev > 0 ? formatNumber(totalPrev) : ''}</td>
             <td style="text-align:right; padding-right:6px;" id="ds-total-sales">${formatNumber(totalSales)}</td>
-            <td style="text-align:right; padding-right:6px; color:#1B365D;" id="ds-total-balance">${formatNumber(totalSales)}</td>
+            <td style="text-align:right; padding-right:6px; color:#1B365D;" id="ds-total-balance">${formatNumber(totalBalance)}</td>
           </tr>
         </tfoot>
       </table>

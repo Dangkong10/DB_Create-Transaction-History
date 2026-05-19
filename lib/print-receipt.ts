@@ -10,6 +10,7 @@ import { aggregateTransactions, groupByReceipt, filterByDate, type ReceiptGroup 
 import { loadProducts } from './storage';
 import type { Transaction } from './excel-utils';
 import type { Product } from './types';
+import { getReceiptBalancesForDate, type ReceiptBalances } from './payments';
 
 // 영수증 높이 계산 상수 (pt 단위)
 const ROW_HEIGHT_PT = 17;
@@ -49,8 +50,18 @@ export async function openReceiptPreview(
   const oversized: ReceiptGroup[] = [];
   receipts.forEach((r) => (r.items.length > 6 ? oversized : normal).push(r));
 
+  // 전잔고 조회 (날짜 지정된 경우만). 실패해도 영수증은 정상 출력 (전잔고만 빈 채로).
+  let balancesByCustomer: Map<string, ReceiptBalances> = new Map();
+  if (dateStr) {
+    try {
+      balancesByCustomer = await getReceiptBalancesForDate(dateStr);
+    } catch (err) {
+      console.warn('[openReceiptPreview] 전잔고 조회 실패 (영수증은 그대로 출력):', err);
+    }
+  }
+
   // HTML 생성
-  const contentHtml = buildReceiptHtml(normal, oversized, products, specialPrices);
+  const contentHtml = buildReceiptHtml(normal, oversized, products, specialPrices, balancesByCustomer);
 
   openPrintModal({
     title: titleOverride || `🧾 ${dateStr || '전체'} 영수증 (${receipts.length}건)`,
@@ -68,6 +79,7 @@ function buildReceiptHtml(
   oversized: ReceiptGroup[],
   products: Product[],
   specialPrices: Array<{ customerName: string; productName: string; customPrice: number }>,
+  balancesByCustomer: Map<string, ReceiptBalances>,
 ): string {
   const parts: string[] = [];
   let pageNum = 0;
@@ -88,7 +100,7 @@ function buildReceiptHtml(
     for (let slot = 0; slot < 6; slot++) {
       if (slot < pageReceipts.length) {
         parts.push('<div class="r-block">');
-        parts.push(buildSingleReceipt(pageReceipts[slot], products, specialPrices, 6));
+        parts.push(buildSingleReceipt(pageReceipts[slot], products, specialPrices, 6, balancesByCustomer.get(pageReceipts[slot].customerName)?.previousBalance ?? 0));
         parts.push('</div>');
       } else {
         parts.push('<div class="r-block"><div class="empty-slot"><div class="empty-slot-inner">빈 슬롯</div></div></div>');
@@ -111,12 +123,12 @@ function buildReceiptHtml(
         if (row.length === 2) {
           parts.push('<div class="over-grid-2" style="margin-bottom:6mm;">');
           row.forEach((r) => {
-            parts.push(`<div>${buildSingleReceipt(r, products, specialPrices, r.items.length)}</div>`);
+            parts.push(`<div>${buildSingleReceipt(r, products, specialPrices, r.items.length, balancesByCustomer.get(r.customerName)?.previousBalance ?? 0)}</div>`);
           });
           parts.push('</div>');
         } else {
           parts.push('<div class="over-grid-1" style="margin-bottom:6mm;">');
-          parts.push(`<div>${buildSingleReceipt(row[0], products, specialPrices, row[0].items.length)}</div>`);
+          parts.push(`<div>${buildSingleReceipt(row[0], products, specialPrices, row[0].items.length, balancesByCustomer.get(row[0].customerName)?.previousBalance ?? 0)}</div>`);
           parts.push('</div>');
         }
       });
@@ -137,6 +149,7 @@ function buildSingleReceipt(
   products: Product[],
   specialPrices: Array<{ customerName: string; productName: string; customPrice: number }>,
   maxRows: number,
+  previousBalance: number = 0,
 ): string {
   const date = formatDateWithDay(receipt.date);
   let totalPrice = 0;
@@ -167,6 +180,18 @@ function buildSingleReceipt(
           <td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td>
         </tr>`);
     }
+  }
+
+  // 전잔고 자동 채움: 빈 행이 있을 때만 '공급가 총액' 바로 윗 칸에 표기.
+  // 명세서 §6 — 출력 폼 변형 금지. 6칸 꽉 차면 자동 채움 X.
+  if (previousBalance > 0 && receipt.items.length < maxRows) {
+    itemRows[itemRows.length - 1] = `
+      <tr class="ri">
+        <td contenteditable="true" style="text-align:right; font-weight:600; color:#92400e;">전잔고</td>
+        <td>&nbsp;</td>
+        <td contenteditable="true" style="text-align:right; font-weight:600; color:#92400e;">${formatNumber(previousBalance)}</td>
+      </tr>`;
+    totalPrice += previousBalance;
   }
 
   return `

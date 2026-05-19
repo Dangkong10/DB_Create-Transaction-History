@@ -23,6 +23,8 @@ import { loadProducts, loadCustomers } from "@/lib/storage";
 import { searchCustomers } from "@/lib/search-utils";
 import { matchChosung } from "@/lib/hangul-utils";
 import { aggregateTransactions, groupByReceipt, filterByDate, type ReceiptGroup } from "@/lib/excel-utils";
+import { getPendingCustomers } from "@/lib/payments";
+import { DepositInputModal } from "@/components/deposit-input-modal";
 import type { Customer, Product } from "@/lib/types";
 import * as Haptics from "expo-haptics";
 
@@ -41,6 +43,27 @@ export default function ReceiptScreen() {
   const [customerQuery, setCustomerQuery] = useState("");
   const scrollViewRef = useRef<ScrollView>(null);
   const [showScrollTop, setShowScrollTop] = useState(false);
+  /** 입금 입력 대기 중인 거래처 수 (미수 > 0). 마이그레이션 미적용 시 0. */
+  const [pendingCount, setPendingCount] = useState(0);
+  /** 입금 입력 모달 열림 상태 */
+  const [depositModalVisible, setDepositModalVisible] = useState(false);
+
+  /** 미수 거래처 수 갱신 (실패해도 UI 안 깨짐) */
+  const refreshPendingCount = async () => {
+    try {
+      const rows = await getPendingCustomers();
+      setPendingCount(rows.length);
+    } catch (err) {
+      // payments 테이블 마이그레이션 미적용 시 등 — 조용히 0 처리
+      console.warn("[refreshPendingCount] 실패:", err);
+      setPendingCount(0);
+    }
+  };
+
+  /** [입금 입력] 카드 클릭 — 모달 열기 */
+  const handleDepositInputClick = () => {
+    setDepositModalVisible(true);
+  };
 
   const handleScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
     const y = e.nativeEvent.contentOffset.y;
@@ -92,6 +115,9 @@ export default function ReceiptScreen() {
           console.warn("서버 동기화 실패, 로컬 데이터 사용:", serverErr);
         }
       }
+
+      // 3) 미수 거래처 수 갱신 (실패해도 무시)
+      await refreshPendingCount();
     } catch (error) {
       console.error("거래 내역 조회 실패:", error);
       showToast("거래 내역을 불러오는데 실패했습니다.", "error");
@@ -331,6 +357,40 @@ export default function ReceiptScreen() {
                   누르면 미리보기 →
                 </Text>
               </TouchableOpacity>
+
+              {/* 입금 입력 (Task 5 — 카드만 추가, 모달은 Task 6) */}
+              <TouchableOpacity
+                onPress={handleDepositInputClick}
+                disabled={isExporting}
+                style={{
+                  flex: 1, minHeight: 140, justifyContent: 'center', alignItems: 'center',
+                  backgroundColor: '#f59e0b', borderRadius: 14, padding: 20,
+                  opacity: isExporting ? 0.5 : 1,
+                  position: 'relative',
+                  ...SHADOW,
+                }}
+                activeOpacity={0.7}
+              >
+                {pendingCount > 0 && (
+                  <View style={{
+                    position: 'absolute', top: 10, right: 10,
+                    backgroundColor: '#dc2626', borderRadius: 12,
+                    paddingHorizontal: 8, paddingVertical: 2,
+                    minWidth: 24, alignItems: 'center',
+                  }}>
+                    <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>
+                      {pendingCount}
+                    </Text>
+                  </View>
+                )}
+                <MaterialIcons name="payments" size={36} color="#ffffff" style={{ marginBottom: 8 }} />
+                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 18, marginBottom: 4 }}>
+                  입금 입력
+                </Text>
+                <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 13 }}>
+                  어제 미수 정리 →
+                </Text>
+              </TouchableOpacity>
             </View>
 
             {/* 흐름 안내 */}
@@ -343,7 +403,7 @@ export default function ReceiptScreen() {
                 backgroundColor: '#ffffff', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 8,
               }}>
                 <Text style={{ fontSize: 14, color: '#1B365D', fontWeight: '600' }}>
-                  👆 위 버튼을 누르면
+                  위 버튼을 누르면
                 </Text>
               </View>
               <Text style={{ fontSize: 14, color: '#999' }}>→</Text>
@@ -367,7 +427,7 @@ export default function ReceiptScreen() {
                 backgroundColor: '#ffffff', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 8,
               }}>
                 <Text style={{ fontSize: 14, color: '#1B365D', fontWeight: '600' }}>
-                  🖨️ 프린트 버튼으로 인쇄
+                  프린트 버튼으로 인쇄
                 </Text>
               </View>
             </View>
@@ -419,8 +479,18 @@ export default function ReceiptScreen() {
                 </TouchableOpacity>
               </View>
 
-              {/* (4) 검색 결과 리스트 */}
-              {!selectedDate ? (
+              {/* (4) 검색 결과 리스트
+                  — 거래처명 입력 전엔 표시 X (날짜만으로는 표시 안 됨) */}
+              {!customerQuery.trim() ? (
+                <View style={{ padding: 32, alignItems: 'center' }}>
+                  <Text style={{ fontSize: 15, color: '#666666' }}>
+                    거래처명을 입력해 검색해주세요
+                  </Text>
+                  <Text style={{ fontSize: 12, color: '#cbd5e1', marginTop: 4 }}>
+                    (날짜만 선택해서는 표시되지 않음)
+                  </Text>
+                </View>
+              ) : !selectedDate ? (
                 <View style={{ padding: 32, alignItems: 'center' }}>
                   <Text style={{ fontSize: 15, color: '#666666' }}>
                     날짜를 먼저 선택해주세요
@@ -499,6 +569,15 @@ export default function ReceiptScreen() {
           </View>
         </ScrollView>
         <ScrollToTopFab visible={showScrollTop} onPress={handleScrollToTop} />
+
+        <DepositInputModal
+          visible={depositModalVisible}
+          onClose={() => setDepositModalVisible(false)}
+          onSaved={() => {
+            // 저장 후 미수 카운트 갱신
+            void refreshPendingCount();
+          }}
+        />
       </ResponsiveContainer>
     </ScreenContainer>
   );

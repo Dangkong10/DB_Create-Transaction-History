@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>구현 명세서 — 미수금 누적 시스템</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+    background: #f5f6f8;
+    color: #0f172a;
+    line-height: 1.6;
+  }
+  .container { max-width: 980px; margin: 0 auto; padding: 40px 30px 80px; }
+  .cover {
+    background: linear-gradient(135deg, #1e3a8a, #2563eb);
+    color: #fff;
+    padding: 40px 36px;
+    border-radius: 14px;
+    margin-bottom: 30px;
+  }
+  .cover .tag {
+    display: inline-block;
+    font-size: 12px;
+    padding: 4px 12px;
+    background: rgba(255,255,255,0.2);
+    border-radius: 20px;
+    margin-bottom: 12px;
+  }
+  .cover h1 { font-size: 28px; margin-bottom: 8px; }
+  .cover .sub { font-size: 14px; opacity: 0.85; margin-bottom: 18px; }
+  .cover .meta { display: flex; gap: 22px; flex-wrap: wrap; font-size: 12px; opacity: 0.9; }
+  .toc {
+    background: #fff;
+    padding: 22px 26px;
+    border-radius: 12px;
+    margin-bottom: 30px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  }
+  .toc h2 { font-size: 14px; color: #1e3a8a; margin-bottom: 12px; }
+  .toc ol { margin-left: 22px; font-size: 13px; color: #334155; columns: 2; column-gap: 30px; }
+  .toc li { margin-bottom: 4px; }
+  .toc a { color: inherit; text-decoration: none; }
+  .toc a:hover { color: #2563eb; text-decoration: underline; }
+  section {
+    background: #fff;
+    border-radius: 12px;
+    padding: 26px 30px;
+    margin-bottom: 22px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  }
+  section h2 {
+    font-size: 20px;
+    color: #1e3a8a;
+    margin-bottom: 14px;
+    padding-bottom: 8px;
+    border-bottom: 2px solid #e0e7ff;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  section h2 .sn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: #1e3a8a;
+    color: #fff;
+    width: 26px;
+    height: 26px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 700;
+  }
+  section h3 { font-size: 15px; color: #1e293b; margin: 18px 0 8px; }
+  section h3:first-of-type { margin-top: 8px; }
+  section p, section ul, section ol { font-size: 13px; color: #334155; }
+  section ul, section ol { padding-left: 22px; margin: 8px 0; }
+  section li { margin-bottom: 4px; }
+  .code {
+    background: #0f172a;
+    color: #e2e8f0;
+    padding: 14px 18px;
+    border-radius: 8px;
+    font-family: "SF Mono", Menlo, monospace;
+    font-size: 12px;
+    line-height: 1.65;
+    white-space: pre;
+    overflow-x: auto;
+    margin: 10px 0;
+  }
+  .code .kw { color: #a78bfa; }
+  .code .str { color: #fcd34d; }
+  .code .num { color: #93c5fd; }
+  .code .cm { color: #6b7280; font-style: italic; }
+  .formula {
+    background: #fffbe6;
+    border-left: 4px solid #f59e0b;
+    padding: 12px 16px;
+    border-radius: 4px;
+    font-family: "SF Mono", Menlo, monospace;
+    font-size: 12px;
+    white-space: pre-wrap;
+    margin: 10px 0;
+    line-height: 1.7;
+  }
+  table.spec {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    margin: 10px 0;
+  }
+  table.spec th, table.spec td {
+    padding: 8px 12px;
+    border: 1px solid #e2e8f0;
+    text-align: left;
+    vertical-align: top;
+  }
+  table.spec th { background: #f1f5f9; font-weight: 600; font-size: 11px; }
+  table.spec td.center { text-align: center; }
+  .note {
+    background: #eff6ff;
+    border-left: 4px solid #2563eb;
+    padding: 10px 14px;
+    border-radius: 4px;
+    font-size: 12px;
+    color: #1e40af;
+    margin: 10px 0;
+  }
+  .note.warn { background: #fef3c7; border-left-color: #f59e0b; color: #92400e; }
+  .note.danger { background: #fee2e2; border-left-color: #dc2626; color: #991b1b; }
+  .note.good { background: #dcfce7; border-left-color: #16a34a; color: #14532d; }
+  .pill {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .pill.new { background: #16a34a; color: #fff; }
+  .pill.mod { background: #f59e0b; color: #fff; }
+  .pill.keep { background: #94a3b8; color: #fff; }
+  ul.checks li {
+    list-style: none;
+    position: relative;
+    padding-left: 22px;
+    margin-bottom: 6px;
+  }
+  ul.checks li::before {
+    content: "☑";
+    position: absolute;
+    left: 0;
+    color: #16a34a;
+    font-size: 14px;
+  }
+  ul.decisions li {
+    list-style: none;
+    padding: 10px 14px;
+    background: #dcfce7;
+    border-radius: 6px;
+    margin-bottom: 8px;
+    font-size: 12px;
+    border-left: 4px solid #16a34a;
+  }
+  ul.decisions li strong { color: #14532d; }
+  ul.decisions code { background: #fff; padding: 1px 6px; border-radius: 3px; font-size: 11px; }
+  .task-list {
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    overflow: hidden;
+    margin: 8px 0;
+  }
+  .task {
+    padding: 12px 16px;
+    border-bottom: 1px solid #e2e8f0;
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 12px;
+    align-items: start;
+  }
+  .task:last-child { border-bottom: none; }
+  .task .tnum {
+    background: #1e3a8a;
+    color: #fff;
+    width: 26px;
+    height: 26px;
+    border-radius: 6px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+  .task .ttitle { font-weight: 600; font-size: 13px; color: #1e293b; }
+  .task .tdesc { font-size: 12px; color: #64748b; margin-top: 3px; }
+  .task .tlayer {
+    font-size: 10px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    background: #e0e7ff;
+    color: #3730a3;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .task .tlayer.fe { background: #dcfce7; color: #14532d; }
+  .task .tlayer.be { background: #fef3c7; color: #92400e; }
+  .task .tlayer.db { background: #fee2e2; color: #991b1b; }
+  .scenario {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 14px 18px;
+    margin: 10px 0;
+  }
+  .scenario .sname { font-weight: 700; color: #1e293b; margin-bottom: 6px; font-size: 13px; }
+  .scenario .given, .scenario .when, .scenario .then {
+    font-size: 12px;
+    color: #475569;
+    margin: 3px 0;
+    padding-left: 60px;
+    text-indent: -60px;
+  }
+  .scenario .given strong { color: #475569; }
+  .scenario .when strong { color: #2563eb; }
+  .scenario .then strong { color: #16a34a; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <div class="cover">
+    <span class="tag">구현 명세서 · v1.1 (결정 사항 확정 완료)</span>
+    <h1>미수금 누적 시스템</h1>
+    <p class="sub">DB_Create Transaction History · '프린트 출력' 레이어 확장</p>
+    <div class="meta">
+      <div>📅 2026-05-18</div>
+      <div>🎯 전날 미수금 자동 이월 → 다음날 영수증 합산</div>
+      <div>🔧 적용 범위: 영수증·집계표·입금 입력</div>
+    </div>
+  </div>
+
+  <div class="toc">
+    <h2>📚 목차</h2>
+    <ol>
+      <li><a href="#s1">개요 · 핵심 변경 요약</a></li>
+      <li><a href="#s2">데이터 모델 (DB)</a></li>
+      <li><a href="#s3">핵심 계산 공식</a></li>
+      <li><a href="#s4">UI 변경사항 — 영수증 출력 페이지</a></li>
+      <li><a href="#s5">[입금 입력] 모달 상세 명세</a></li>
+      <li><a href="#s6">영수증 출력 자동 채움 로직</a></li>
+      <li><a href="#s7">집계표 출력 자동 채움 로직</a></li>
+      <li><a href="#s8">'특정 거래처 영수증' 검색 동작 변경</a></li>
+      <li><a href="#s9">결정 사항 (확정 ✅)</a></li>
+      <li><a href="#s10">구현 Task Breakdown</a></li>
+      <li><a href="#s11">검증 시나리오 (테스트 케이스)</a></li>
+    </ol>
+  </div>
+
+  <section id="s1">
+    <h2><span class="sn">1</span> 개요 · 핵심 변경 요약</h2>
+    <h3>비즈니스 목적</h3>
+    <p>영수증 출력 후 당일 입금이 안 된 거래처의 미수금을 자동으로 다음날 영수증·집계표에 합산해 청구한다. 현재는 수기로 미수를 추적해야 한다.</p>
+    <h3>핵심 변경 (한눈에)</h3>
+    <ul class="checks">
+      <li><strong>새 DB 테이블</strong> 1개 추가 (<code>입금기록</code>)</li>
+      <li>'영수증 출력' 페이지에 <strong>[입금 입력] 카드</strong> 추가 (모달 팝업)</li>
+      <li>영수증·집계표 출력 시 <strong>전잔고 자동 채움</strong> (출력 폼 변형 X)</li>
+      <li>'특정 거래처 영수증' 검색 동작 변경 (거래처명 입력 전엔 표시 X)</li>
+      <li>플로우 안내 칩 4개의 <strong>아이콘 제거</strong> (텍스트만)</li>
+    </ul>
+    <div class="note danger">
+      <strong>⚠ 절대 변경 금지</strong>: 영수증·집계표 출력 폼의 컬럼 구조, 칸 위치, 디자인.<br/>
+      → 기존에 비어있던 <strong>'전잔고' 칸</strong>과 영수증의 <strong>'공급가 총액' 윗 빈 칸</strong>만 자동으로 채움.
+    </div>
+  </section>
+
+  <section id="s2">
+    <h2><span class="sn">2</span> 데이터 모델 (DB)</h2>
+    <h3>새 테이블 — <code>입금기록</code> <span class="pill new">NEW</span></h3>
+<div class="code"><span class="cm">-- 거래처별 입금 사건을 row 단위로 저장</span>
+<span class="kw">CREATE TABLE</span> 입금기록 (
+  id              <span class="kw">INTEGER PRIMARY KEY AUTOINCREMENT</span>,
+  거래처_id       <span class="kw">INTEGER NOT NULL</span>,    <span class="cm">-- FK → 거래처마스터.id</span>
+  입금일자         <span class="kw">DATE NOT NULL</span>,       <span class="cm">-- 사용자 입력 (기본=어제)</span>
+  입금금액         <span class="kw">INTEGER NOT NULL CHECK</span> (입금금액 &gt; <span class="num">0</span>),
+  생성일시         <span class="kw">DATETIME DEFAULT</span> <span class="str">CURRENT_TIMESTAMP</span>,
+  <span class="kw">FOREIGN KEY</span> (거래처_id) <span class="kw">REFERENCES</span> 거래처마스터(id)
+);
+
+<span class="kw">CREATE INDEX</span> idx_입금기록_거래처일자 <span class="kw">ON</span> 입금기록(거래처_id, 입금일자);</div>
+    <p><strong>UNIQUE 제약 두지 않음</strong> — 같은 거래처에 같은 날짜로 여러 row 허용 (Q4 결정 사항).</p>
+    <h3>기존 테이블 (변경 없음) <span class="pill keep">KEEP</span></h3>
+    <p>매출 / 거래처마스터 — 변경 없음.</p>
+    <div class="note">
+      💡 거래처별 현재 미수금은 <strong>저장하지 않음</strong>. 매번 SUM 계산으로 도출. 매일 마감 갱신 작업 없음.
+    </div>
+  </section>
+
+  <section id="s3">
+    <h2><span class="sn">3</span> 핵심 계산 공식</h2>
+    <h3>① 현재 미수금 (입금 입력 화면 표시용)</h3>
+<div class="formula">현재미수금(거래처 X)
+  = SUM(매출.금액 WHERE 거래처_id = X)
+  − SUM(입금기록.금액 WHERE 거래처_id = X)</div>
+    <h3>② 전잔고 (영수증·집계표의 '전잔고' 칸)</h3>
+<div class="formula">전잔고(거래처 X, 출력 날짜 D)
+  = SUM(매출.금액 WHERE 거래처_id = X AND 매출일자 &lt; D)
+  − SUM(입금기록.금액 WHERE 거래처_id = X AND 입금일자 ≤ D)</div>
+    <h3>③ 당일매출 (영수증·집계표의 '매출금액' 칸)</h3>
+<div class="formula">당일매출(거래처 X, 출력 날짜 D)
+  = SUM(매출.금액 WHERE 거래처_id = X AND 매출일자 = D)</div>
+    <h3>④ 총잔액 (영수증의 '공급가 총액', 집계표의 '총잔액' 칸)</h3>
+<div class="formula">총잔액(X, D) = 전잔고(X, D) + 당일매출(X, D)</div>
+    <h3>SQL 예시 — 한 거래처 한 줄</h3>
+<div class="code"><span class="kw">SELECT</span>
+  c.이름 <span class="kw">AS</span> 상호,
+  (<span class="kw">SELECT COALESCE</span>(<span class="kw">SUM</span>(금액), <span class="num">0</span>) <span class="kw">FROM</span> 매출
+    <span class="kw">WHERE</span> 거래처_id = c.id <span class="kw">AND</span> 매출일자 &lt; :D)
+  - (<span class="kw">SELECT COALESCE</span>(<span class="kw">SUM</span>(금액), <span class="num">0</span>) <span class="kw">FROM</span> 입금기록
+    <span class="kw">WHERE</span> 거래처_id = c.id <span class="kw">AND</span> 입금일자 &lt;= :D)
+  <span class="kw">AS</span> 전잔고,
+  (<span class="kw">SELECT COALESCE</span>(<span class="kw">SUM</span>(금액), <span class="num">0</span>) <span class="kw">FROM</span> 매출
+    <span class="kw">WHERE</span> 거래처_id = c.id <span class="kw">AND</span> 매출일자 = :D)
+  <span class="kw">AS</span> 당일매출
+<span class="kw">FROM</span> 거래처마스터 c
+<span class="kw">WHERE</span> c.id = :거래처_id;</div>
+  </section>
+
+  <section id="s4">
+    <h2><span class="sn">4</span> UI 변경사항 — 영수증 출력 페이지</h2>
+    <table class="spec">
+      <thead><tr><th>위치</th><th>변경</th><th>유형</th></tr></thead>
+      <tbody>
+        <tr><td>액션 카드 그리드 (상단)</td><td>2개 → 3개. <code>[입금 입력]</code> 카드 추가 (오렌지색, 미수 카운트 뱃지)</td><td><span class="pill new">NEW</span></td></tr>
+        <tr><td>플로우 안내 칩</td><td>"위 버튼을 누르면 → 미리보기 팝업이 열림 → 내용 수정 가능 → 프린트 / 저장" 아이콘 제거</td><td><span class="pill mod">MOD</span></td></tr>
+        <tr><td>특정 거래처 영수증 placeholder</td><td>"날짜를 먼저 선택해주세요" → <strong>"거래처명을 입력해 검색해주세요"</strong></td><td><span class="pill mod">MOD</span></td></tr>
+        <tr><td>날짜 선택 / 다른 카드 / 데이터 통계 / 검색 / 탭 네비</td><td>변경 없음</td><td><span class="pill keep">KEEP</span></td></tr>
+      </tbody>
+    </table>
+    <h3>[입금 입력] 카드 사양</h3>
+    <ul>
+      <li>위치: 세 번째 카드</li>
+      <li>배경색: <code>#f59e0b</code> (오렌지) — 다른 두 카드(<code>#94a3b8</code> 슬레이트)와 차별화</li>
+      <li>우상단 뱃지: 현재미수금 > 0 인 거래처 수. 0이면 숨김</li>
+      <li>아이콘: 💰 / 라벨: "입금 입력" / 서브: "어제 미수 정리 →"</li>
+      <li>클릭 → <strong>모달 팝업</strong> 열림</li>
+    </ul>
+  </section>
+
+  <section id="s5">
+    <h2><span class="sn">5</span> [입금 입력] 모달 상세 명세</h2>
+    <h3>모달 구조</h3>
+    <table class="spec">
+      <thead><tr><th>영역</th><th>구성</th></tr></thead>
+      <tbody>
+        <tr><td>헤더 (navy)</td><td>💰 "입금 입력" · ✕ 닫기</td></tr>
+        <tr><td>날짜 입력 행</td><td>"입금 날짜:" 라벨 + <code>&lt;input type="date" max="오늘"&gt;</code> (기본값=어제) + [어제] + [오늘]</td></tr>
+        <tr><td>테이블 헤더</td><td>거래처 | 현재 미수금 | 입금받은 금액 | (전액 버튼 자리)</td></tr>
+        <tr><td>거래처 행 (반복)</td><td>거래처명 | 현재미수금 (read-only) | number input | <code>[전액]</code> 버튼</td></tr>
+        <tr><td>하단</td><td><code>[저장]</code> 버튼 (navy, full width)</td></tr>
+      </tbody>
+    </table>
+    <h3>데이터 로딩</h3>
+    <ul>
+      <li>모달 열림 시: <strong>현재미수금 > 0</strong> 인 모든 거래처 조회 (날짜 무관)</li>
+      <li>거래처 정렬: 기존 가나다순</li>
+      <li>전체 미수 0이면 본문에 "정리할 미수가 없습니다" 안내</li>
+    </ul>
+    <h3>날짜 입력 동작</h3>
+    <ul>
+      <li>기본값 = <strong>어제</strong></li>
+      <li><code>type="date"</code>, <code>max=오늘</code> — 미래 날짜 차단 (Q3)</li>
+      <li>[어제] / [오늘] 빠른 버튼 제공</li>
+    </ul>
+    <h3>[전액 입금] 버튼 동작</h3>
+    <ul>
+      <li>클릭 → 입력란을 현재미수금 값으로 자동 채움</li>
+      <li>버튼 시각 변화: ✓ + 초록색. 사용자가 직접 수정하면 원상복구.</li>
+    </ul>
+    <h3>[저장] 동작</h3>
+    <ol>
+      <li>입력란이 비어있지 않고 > 0인 거래처만 저장 대상</li>
+      <li><strong>입금금액 > 현재미수금 인 거래처가 있으면 경고 모달</strong> (Q1):<br/>
+        <code>"거래처 X의 현재 미수금은 18,000원입니다. 입력값 180,000원이 더 큽니다. 정말 저장하시겠습니까? [취소] [확인]"</code></li>
+      <li>[확인] 시 일괄 INSERT (트랜잭션). 음수 미수금 허용.</li>
+      <li>성공 → 모달 닫힘 + 토스트 "N건 저장됨"</li>
+    </ol>
+    <h3>유효성 검증</h3>
+    <ul>
+      <li>입금금액: 양의 정수만 (음수·소수·0 불가)</li>
+      <li>입금금액 > 현재미수금: 경고 후 사용자 확인 (위 §저장 동작 참조)</li>
+    </ul>
+  </section>
+
+  <section id="s6">
+    <h2><span class="sn">6</span> 영수증 출력 자동 채움 로직</h2>
+    <h3>출력 대상 거래처 필터링 (날짜 D)</h3>
+    <table class="spec">
+      <thead><tr><th>당일매출(D)</th><th>전잔고(D)</th><th>처리</th></tr></thead>
+      <tbody>
+        <tr><td>= 0</td><td>= 0</td><td class="center">출력 X</td></tr>
+        <tr><td>= 0</td><td>> 0</td><td class="center"><strong>출력 X</strong> (사용자 확정)</td></tr>
+        <tr><td>> 0</td><td>= 0</td><td class="center">출력 ✓ (전잔고 칸 빈 채로)</td></tr>
+        <tr><td>> 0</td><td>> 0</td><td class="center">출력 ✓ (전잔고 칸 채움 + 총액 합산)</td></tr>
+      </tbody>
+    </table>
+    <h3>자동 채움 위치</h3>
+    <p>'<strong>공급가 총액</strong>' 바로 윗 칸 (현재 비어있는 행):</p>
+    <ul>
+      <li>전잔고 > 0: "전잔고: {금액}" 표기</li>
+      <li>전잔고 = 0: 그 행 그대로 빈 채</li>
+    </ul>
+    <p>'공급가 총액' = 당일매출 + 전잔고</p>
+    <div class="note warn">⚠ 출력 폼의 행 개수, 컬럼 폭, 디자인 절대 변경 X.</div>
+  </section>
+
+  <section id="s7">
+    <h2><span class="sn">7</span> 집계표 출력 자동 채움 로직</h2>
+    <p>날짜 D로 집계표 출력 시, <strong>당일매출(D) > 0</strong> 인 거래처만 행으로 표시.</p>
+    <table class="spec">
+      <thead><tr><th>컬럼</th><th>값</th></tr></thead>
+      <tbody>
+        <tr><td>상호</td><td>거래처명</td></tr>
+        <tr><td>전잔고</td><td>전잔고(X, D) — 0이면 빈 칸</td></tr>
+        <tr><td>매출금액</td><td>당일매출(X, D)</td></tr>
+        <tr><td>총잔액</td><td>전잔고 + 당일매출</td></tr>
+      </tbody>
+    </table>
+    <div class="note">💡 매출 0 + 미수 있는 거래처는 집계표·영수증에 안 보임. 안전망: 다음날 [입금 입력] 모달에 자동으로 떠 있음.</div>
+  </section>
+
+  <section id="s8">
+    <h2><span class="sn">8</span> '특정 거래처 영수증' 검색 동작 변경</h2>
+    <p>날짜만 선택해서는 아무것도 표시하지 않음. <strong>거래처명을 검색란에 입력 + [검색] 버튼</strong>을 눌러야 표시.</p>
+    <ul>
+      <li>placeholder: "거래처명을 입력해 검색해주세요"</li>
+      <li>검색 전: 빈 placeholder</li>
+      <li>날짜 선택 안 된 상태에서 검색 → "날짜를 먼저 선택해주세요" 에러</li>
+    </ul>
+  </section>
+
+  <section id="s9">
+    <h2><span class="sn">9</span> 결정 사항 (확정 ✅)</h2>
+    <p>모든 edge case 결정 완료.</p>
+    <ul class="decisions">
+      <li>
+        <strong>Q1. ✅ 입금금액 > 현재미수금 — 경고 후 사용자 확인 (b)</strong><br/>
+        [저장] 클릭 시 입력값 > 현재미수금인 거래처가 있으면 경고 모달.
+        <code>"거래처 X의 현재 미수금은 18,000원입니다. 입력값 180,000원이 더 큽니다. 정말 저장하시겠습니까? [취소] [확인]"</code>
+        [확인] 시 정상 INSERT. 음수 미수금 허용(선입금/환불 대응).
+        구현 위치: FE 모달 저장 핸들러. BE는 단순 INSERT.
+      </li>
+      <li>
+        <strong>Q2. ✅ 입금 기록 수정/삭제 — 이번 범위 밖</strong><br/>
+        추후 별도 Apple. 이번 명세는 INSERT만.
+      </li>
+      <li>
+        <strong>Q3. ✅ 미래 날짜 입금 — 차단</strong><br/>
+        모달 날짜 입력란에 <code>max=오늘</code>. 직접 입력해도 검증으로 차단.
+      </li>
+      <li>
+        <strong>Q4. ✅ 같은 날짜 + 같은 거래처 두 번 입금 — 허용 (ii)</strong><br/>
+        DB UNIQUE 제약 X. 여러 row 누적 허용 (오전·오후 따로 받은 케이스 대응).
+        SUM 계산이라 row 개수와 무관하게 일관됨.
+      </li>
+      <li>
+        <strong>Q5. ✅ 거래처 삭제 — soft-delete만</strong><br/>
+        기존 거래처마스터 정책 그대로. 입금기록 FK 유지.
+      </li>
+    </ul>
+  </section>
+
+  <section id="s10">
+    <h2><span class="sn">10</span> 구현 Task Breakdown</h2>
+    <p>한 입씩 처리할 수 있도록 분해. 각 Task = 독립 PR/커밋 단위 권장.</p>
+    <div class="task-list">
+      <div class="task">
+        <span class="tnum">1</span>
+        <div><div class="ttitle">DB — <code>입금기록</code> 테이블 생성 (drizzle 스키마)</div>
+        <div class="tdesc">§2의 SQL 그대로. 인덱스 포함. Drizzle config 활용.</div></div>
+        <span class="tlayer db">DB</span>
+      </div>
+      <div class="task">
+        <span class="tnum">2</span>
+        <div><div class="ttitle">BE — 현재미수금 / 전잔고 계산 함수</div>
+        <div class="tdesc">§3 공식 재사용 가능한 형태로. 영수증·집계표·모달에서 모두 사용.</div></div>
+        <span class="tlayer be">BE</span>
+      </div>
+      <div class="task">
+        <span class="tnum">3</span>
+        <div><div class="ttitle">BE — 입금 입력 저장 API</div>
+        <div class="tdesc">{거래처_id, 입금일자, 입금금액}[] 받아 일괄 INSERT (트랜잭션). BE는 단순 INSERT만, 검증은 FE.</div></div>
+        <span class="tlayer be">BE</span>
+      </div>
+      <div class="task">
+        <span class="tnum">4</span>
+        <div><div class="ttitle">BE — 입금 입력용 거래처 리스트 API</div>
+        <div class="tdesc">현재미수금 > 0 인 거래처 + 금액 반환.</div></div>
+        <span class="tlayer be">BE</span>
+      </div>
+      <div class="task">
+        <span class="tnum">5</span>
+        <div><div class="ttitle">FE — 영수증 출력 페이지에 [입금 입력] 카드 추가</div>
+        <div class="tdesc">3-카드 그리드. 오렌지색. 미수 카운트 뱃지.</div></div>
+        <span class="tlayer fe">FE</span>
+      </div>
+      <div class="task">
+        <span class="tnum">6</span>
+        <div><div class="ttitle">FE — 입금 입력 모달 컴포넌트</div>
+        <div class="tdesc">§5 전체. 날짜 + 거래처 행 + [전액] + [저장] + Q1 경고 모달.</div></div>
+        <span class="tlayer fe">FE</span>
+      </div>
+      <div class="task">
+        <span class="tnum">7</span>
+        <div><div class="ttitle">FE — 영수증 출력 자동 채움</div>
+        <div class="tdesc">§6. 매출 0 + 전잔고만 있는 거래처 출력 제외.</div></div>
+        <span class="tlayer fe">FE</span>
+      </div>
+      <div class="task">
+        <span class="tnum">8</span>
+        <div><div class="ttitle">FE — 집계표 출력 자동 채움</div>
+        <div class="tdesc">§7. 매출 0 거래처 제외.</div></div>
+        <span class="tlayer fe">FE</span>
+      </div>
+      <div class="task">
+        <span class="tnum">9</span>
+        <div><div class="ttitle">FE — 플로우 칩 4개 아이콘 제거</div>
+        <div class="tdesc">텍스트만 유지.</div></div>
+        <span class="tlayer fe">FE</span>
+      </div>
+      <div class="task">
+        <span class="tnum">10</span>
+        <div><div class="ttitle">FE — '특정 거래처 영수증' 검색 동작 변경</div>
+        <div class="tdesc">§8. placeholder + 트리거 변경.</div></div>
+        <span class="tlayer fe">FE</span>
+      </div>
+      <div class="task">
+        <span class="tnum">11</span>
+        <div><div class="ttitle">QA — §11 시나리오 검증</div>
+        <div class="tdesc">5가지 케이스 손계산 vs 시스템 결과 일치.</div></div>
+        <span class="tlayer">QA</span>
+      </div>
+    </div>
+  </section>
+
+  <section id="s11">
+    <h2><span class="sn">11</span> 검증 시나리오</h2>
+    <div class="scenario">
+      <div class="sname">TC-1. 첫날 매출 → 다음날 전액 입금</div>
+      <div class="given"><strong>Given:</strong> 5/14 거래처 A 매출 18,000</div>
+      <div class="when"><strong>When:</strong> 5/15 입금 18,000 전액 입력</div>
+      <div class="then"><strong>Then:</strong> 5/15 영수증·집계표에 A 안 보임. 입금 모달에도 없음.</div>
+    </div>
+    <div class="scenario">
+      <div class="sname">TC-2. 부분 입금 → 잔액 이월</div>
+      <div class="given"><strong>Given:</strong> 5/14 B 매출 329,000</div>
+      <div class="when"><strong>When:</strong> 5/15 입금 200,000 + 5/15 추가 매출 50,000</div>
+      <div class="then"><strong>Then:</strong> 5/15 B 영수증 — 전잔고 129,000 / 매출 50,000 / 총잔액 179,000</div>
+    </div>
+    <div class="scenario">
+      <div class="sname">TC-3. 매출 0 + 미수만</div>
+      <div class="given"><strong>Given:</strong> 5/14 C 매출 54,000, 5/15 입금 0</div>
+      <div class="when"><strong>When:</strong> 5/15 C 매출 없음</div>
+      <div class="then"><strong>Then:</strong> 5/15 출력 안 됨. 5/16 [입금 입력]에 C 54,000 떠 있음.</div>
+    </div>
+    <div class="scenario">
+      <div class="sname">TC-4. 입금 날짜 변경 (어제)</div>
+      <div class="given"><strong>Given:</strong> 5/14 D 매출 10,000. 5/15에 입력</div>
+      <div class="when"><strong>When:</strong> 모달 날짜를 5/14로 변경, 10,000 입력</div>
+      <div class="then"><strong>Then:</strong> 입금기록(D, 5/14, 10,000) 저장.</div>
+    </div>
+    <div class="scenario">
+      <div class="sname">TC-5. 입금금액 > 미수금 — 경고</div>
+      <div class="given"><strong>Given:</strong> E 현재미수금 18,000</div>
+      <div class="when"><strong>When:</strong> 사용자가 180,000 입력 후 [저장]</div>
+      <div class="then"><strong>Then:</strong> 경고 모달 → [확인] 클릭 시 저장. 이후 E.현재미수금 = -162,000.</div>
+    </div>
+  </section>
+
+  <div style="text-align:center; color:#94a3b8; font-size:12px; margin-top:30px;">
+    구현 명세서 v1.1 · 2026-05-18 · 진(辰) 작성 · 결정 사항 5건 모두 확정
+  </div>
+
+</div>
+</body>
+</html>
