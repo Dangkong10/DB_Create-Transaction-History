@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import {
   View,
   Text,
@@ -49,7 +49,7 @@ import {
   type DuplicateMode,
 } from "@/lib/excel-manage";
 import { PRODUCT_CATEGORIES } from "@/lib/data";
-import { getCustomerDisplayName, getProductDisplayName, searchProducts } from "@/lib/search-utils";
+import { getCustomerDisplayName, getProductDisplayName, searchCustomers, searchProducts } from "@/lib/search-utils";
 import { getSpecialPricesByCustomer, addSpecialPrice, deleteSpecialPrice } from "@/lib/supabase";
 import { useAuth } from "@/hooks/use-auth";
 import { useIsMounted } from "@/hooks/use-is-mounted";
@@ -83,7 +83,24 @@ export default function ManageScreen() {
   const [newProductAliases, setNewProductAliases] = useState("");
   const [newProductUnitPrice, setNewProductUnitPrice] = useState("");
   const [selectedProductCategory, setSelectedProductCategory] = useState<string>("all");
+  const [productQuery, setProductQuery] = useState("");
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
+  /** 추가 모달 열림 상태 (거래처/제품) */
+  const [addCustomerModalVisible, setAddCustomerModalVisible] = useState(false);
+  const [addProductModalVisible, setAddProductModalVisible] = useState(false);
+
+  /** 제품 목록 검색 필터 (제품명 + 별칭 + 초성). 빈 쿼리면 전체. */
+  const filteredProducts = useMemo(() => {
+    const q = productQuery.trim();
+    return q ? searchProducts(products, q) : products;
+  }, [products, productQuery]);
+
+  /** 거래처 검색용 */
+  const [customerQuery, setCustomerQuery] = useState("");
+  const filteredCustomers = useMemo(() => {
+    const q = customerQuery.trim();
+    return q ? searchCustomers(customers, q) : customers;
+  }, [customers, customerQuery]);
   const [editingUnitPrice, setEditingUnitPrice] = useState("");
 
   const { user, logout, refresh: refreshAuth } = useAuth();
@@ -210,6 +227,7 @@ export default function ManageScreen() {
       if (Platform.OS !== "web") { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); }
       showToast("거래처가 추가되었습니다.", "success");
       setNewCustomerName(""); setNewCustomerAliases("");
+      setAddCustomerModalVisible(false);
       await loadData();
     } catch (error) { showToast("거래처 추가에 실패했습니다.", "error"); }
   }
@@ -223,6 +241,7 @@ export default function ManageScreen() {
       if (Platform.OS !== "web") { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); }
       showToast("제품이 추가되었습니다.", "success");
       setNewProductName(""); setNewProductAliases(""); setNewProductUnitPrice("");
+      setAddProductModalVisible(false);
       await loadData();
     } catch (error) { showToast("제품 추가에 실패했습니다.", "error"); }
   }
@@ -511,43 +530,17 @@ export default function ManageScreen() {
         {/* 거래처 관리 */}
         {activeTab === "customers" && (
           <View style={{ paddingHorizontal: 20 }}>
-            {/* 추가 폼 */}
-            <View style={{
-              backgroundColor: '#ffffff', borderRadius: 14, padding: 16, marginBottom: 16,
-              borderWidth: 1, borderColor: '#e0e0e0', ...SHADOW,
-            }}>
-              <Text style={{ fontSize: 18, fontWeight: '600', color: '#1B365D', marginBottom: 12 }}>
-                거래처 추가
-              </Text>
-              <TextInput
-                value={newCustomerName}
-                onChangeText={setNewCustomerName}
-                placeholder="거래처 이름"
-                placeholderTextColor="#666666"
-                style={{
-                  backgroundColor: '#f5f5f5', borderWidth: 1, borderColor: '#e0e0e0',
-                  borderRadius: 10, paddingHorizontal: 16, paddingVertical: 12, fontSize: 16, color: '#1B365D', marginBottom: 8,
-                }}
-                returnKeyType="next"
-              />
-              <TextInput
-                value={newCustomerAliases}
-                onChangeText={setNewCustomerAliases}
-                placeholder="별칭 (쉼표로 구분, 예: 7조, 켈리)"
-                placeholderTextColor="#666666"
-                style={{
-                  backgroundColor: '#f5f5f5', borderWidth: 1, borderColor: '#e0e0e0',
-                  borderRadius: 10, paddingHorizontal: 16, paddingVertical: 12, fontSize: 16, color: '#1B365D', marginBottom: 12,
-                }}
-                returnKeyType="done"
-              />
-              <TouchableOpacity
-                onPress={handleAddCustomer}
-                style={{ backgroundColor: '#1B365D', paddingVertical: 12, borderRadius: 10 }}
-              >
-                <Text style={{ color: '#fff', textAlign: 'center', fontSize: 16, fontWeight: '600' }}>추가하기</Text>
-              </TouchableOpacity>
-            </View>
+            {/* + 거래처 추가 버튼 (클릭 시 모달 오픈) */}
+            <TouchableOpacity
+              onPress={() => setAddCustomerModalVisible(true)}
+              style={{
+                backgroundColor: '#1B365D', paddingVertical: 14, borderRadius: 12,
+                marginBottom: 16, alignItems: 'center', ...SHADOW,
+              }}
+              activeOpacity={0.85}
+            >
+              <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>+ 거래처 추가</Text>
+            </TouchableOpacity>
 
             {/* 엑셀로 관리 */}
             <View style={{
@@ -586,13 +579,46 @@ export default function ManageScreen() {
             </View>
 
             {/* 거래처 목록 */}
-            <Text style={{ fontSize: 18, fontWeight: '600', color: '#1B365D', marginBottom: 8 }}>거래처 목록</Text>
+            <Text style={{ fontSize: 18, fontWeight: '600', color: '#1B365D', marginBottom: 12 }}>거래처 목록</Text>
+
+            {/* 검색 입력 */}
+            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
+              <TextInput
+                value={customerQuery}
+                onChangeText={setCustomerQuery}
+                placeholder="거래처명 또는 초성 입력 (예: ㄱㅇ)"
+                placeholderTextColor="#999"
+                style={{
+                  flex: 1, paddingHorizontal: 14, paddingVertical: 10,
+                  borderRadius: 10, borderWidth: 1, borderColor: '#e0e0e0',
+                  backgroundColor: '#ffffff', fontSize: 14, color: '#1B365D',
+                }}
+              />
+              {customerQuery.length > 0 && (
+                <TouchableOpacity
+                  onPress={() => setCustomerQuery("")}
+                  style={{
+                    paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10,
+                    backgroundColor: '#e5e7eb', justifyContent: 'center', alignItems: 'center',
+                  }}
+                >
+                  <Text style={{ color: '#475569', fontSize: 13, fontWeight: '600' }}>지우기</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
             {customers.length === 0 ? (
               <Text style={{ color: '#666666', textAlign: 'center', paddingVertical: 32 }}>
                 등록된 거래처가 없습니다.
               </Text>
+            ) : customerQuery.trim() && filteredCustomers.length === 0 ? (
+              <View style={{ padding: 24, alignItems: 'center' }}>
+                <Text style={{ fontSize: 14, color: '#666' }}>
+                  "{customerQuery}" 와(과) 일치하는 거래처가 없습니다.
+                </Text>
+              </View>
             ) : (
-              customers.map((item) => (
+              filteredCustomers.map((item) => (
                 <View
                   key={item.id}
                   style={{
@@ -630,76 +656,17 @@ export default function ManageScreen() {
         {/* 제품 관리 */}
         {activeTab === "products" && (
           <View style={{ paddingHorizontal: 20 }}>
-            {/* 추가 폼 */}
-            <View style={{
-              backgroundColor: '#ffffff', borderRadius: 14, padding: 16, marginBottom: 16,
-              borderWidth: 1, borderColor: '#e0e0e0', ...SHADOW,
-            }}>
-              <Text style={{ fontSize: 18, fontWeight: '600', color: '#1B365D', marginBottom: 12 }}>제품 추가</Text>
-              <TextInput
-                value={newProductName}
-                onChangeText={setNewProductName}
-                placeholder="제품명"
-                placeholderTextColor="#666666"
-                style={{
-                  backgroundColor: '#f5f5f5', borderWidth: 1, borderColor: '#e0e0e0',
-                  borderRadius: 10, paddingHorizontal: 16, paddingVertical: 12, fontSize: 16, color: '#1B365D', marginBottom: 8,
-                }}
-                returnKeyType="next"
-              />
-              {/* 카테고리 */}
-              <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
-                {categories.map((cat) => (
-                  <TouchableOpacity
-                    key={cat.id}
-                    onPress={() => setNewProductCategory(cat.id)}
-                    style={{
-                      flex: 1, paddingVertical: 8, borderRadius: 8,
-                      backgroundColor: newProductCategory === cat.id ? '#1B365D' : '#f5f5f5',
-                      borderWidth: 1, borderColor: newProductCategory === cat.id ? '#1B365D' : '#e0e0e0',
-                    }}
-                  >
-                    <Text style={{
-                      textAlign: 'center', fontSize: 14, fontWeight: '500',
-                      color: newProductCategory === cat.id ? '#ffffff' : '#1B365D',
-                    }}>{cat.name}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-              <TextInput
-                value={newProductAliases}
-                onChangeText={setNewProductAliases}
-                placeholder="별칭 (쉼표로 구분)"
-                placeholderTextColor="#666666"
-                style={{
-                  backgroundColor: '#f5f5f5', borderWidth: 1, borderColor: '#e0e0e0',
-                  borderRadius: 10, paddingHorizontal: 16, paddingVertical: 12, fontSize: 16, color: '#1B365D', marginBottom: 8,
-                }}
-                returnKeyType="next"
-              />
-              <TextInput
-                value={newProductUnitPrice}
-                onChangeText={(text) => {
-                  const numericValue = text.replace(/[^0-9]/g, "");
-                  const formatted = numericValue.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-                  setNewProductUnitPrice(formatted);
-                }}
-                placeholder="단가 (원) - 선택 사항"
-                placeholderTextColor="#666666"
-                style={{
-                  backgroundColor: '#f5f5f5', borderWidth: 1, borderColor: '#e0e0e0',
-                  borderRadius: 10, paddingHorizontal: 16, paddingVertical: 12, fontSize: 16, color: '#1B365D', marginBottom: 12,
-                }}
-                keyboardType="numeric"
-                returnKeyType="done"
-              />
-              <TouchableOpacity
-                onPress={handleAddProduct}
-                style={{ backgroundColor: '#1B365D', paddingVertical: 12, borderRadius: 10 }}
-              >
-                <Text style={{ color: '#fff', textAlign: 'center', fontSize: 16, fontWeight: '600' }}>추가하기</Text>
-              </TouchableOpacity>
-            </View>
+            {/* + 제품 추가 버튼 (클릭 시 모달 오픈) */}
+            <TouchableOpacity
+              onPress={() => setAddProductModalVisible(true)}
+              style={{
+                backgroundColor: '#1B365D', paddingVertical: 14, borderRadius: 12,
+                marginBottom: 16, alignItems: 'center', ...SHADOW,
+              }}
+              activeOpacity={0.85}
+            >
+              <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>+ 제품 추가</Text>
+            </TouchableOpacity>
 
             {/* 엑셀로 관리 */}
             <View style={{
@@ -739,6 +706,33 @@ export default function ManageScreen() {
 
             {/* 제품 목록 */}
             <Text style={{ fontSize: 18, fontWeight: '600', color: '#1B365D', marginBottom: 12 }}>제품 목록</Text>
+
+            {/* 검색 입력 */}
+            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
+              <TextInput
+                value={productQuery}
+                onChangeText={setProductQuery}
+                placeholder="제품명 또는 초성 입력 (예: ㅎㅂ)"
+                placeholderTextColor="#999"
+                style={{
+                  flex: 1, paddingHorizontal: 14, paddingVertical: 10,
+                  borderRadius: 10, borderWidth: 1, borderColor: '#e0e0e0',
+                  backgroundColor: '#ffffff', fontSize: 14, color: '#1B365D',
+                }}
+              />
+              {productQuery.length > 0 && (
+                <TouchableOpacity
+                  onPress={() => setProductQuery("")}
+                  style={{
+                    paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10,
+                    backgroundColor: '#e5e7eb', justifyContent: 'center', alignItems: 'center',
+                  }}
+                >
+                  <Text style={{ color: '#475569', fontSize: 13, fontWeight: '600' }}>지우기</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
             {/* 카테고리 필터 */}
             <View style={{ flexDirection: 'row', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
               <TouchableOpacity
@@ -772,9 +766,17 @@ export default function ManageScreen() {
               ))}
             </View>
 
-            {categories.map((category) => {
+            {productQuery.trim() && filteredProducts.length === 0 && (
+              <View style={{ padding: 24, alignItems: 'center' }}>
+                <Text style={{ fontSize: 14, color: '#666' }}>
+                  "{productQuery}" 와(과) 일치하는 제품이 없습니다.
+                </Text>
+              </View>
+            )}
+
+            {filteredProducts.length > 0 && categories.map((category) => {
               if (selectedProductCategory !== "all" && selectedProductCategory !== category.id) return null;
-              const categoryProducts = products.filter((p) => p.category === category.id);
+              const categoryProducts = filteredProducts.filter((p) => p.category === category.id);
               if (categoryProducts.length === 0) return null;
 
               return (
@@ -942,6 +944,210 @@ export default function ManageScreen() {
         </ScrollView>
         <ScrollToTopFab visible={showScrollTop} onPress={handleScrollToTop} />
       </ResponsiveContainer>
+
+      {/* 거래처 추가 모달 */}
+      <Modal
+        visible={addCustomerModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setAddCustomerModalVisible(false)}
+      >
+        <View style={{
+          flex: 1, backgroundColor: 'rgba(0,0,0,0.5)',
+          justifyContent: 'center', alignItems: 'center', padding: 16,
+        }}>
+          <View style={{
+            backgroundColor: '#fff', borderRadius: 14, width: '100%', maxWidth: 480, overflow: 'hidden',
+          }}>
+            {/* 헤더 */}
+            <View style={{
+              flexDirection: 'row', alignItems: 'center',
+              paddingHorizontal: 20, paddingVertical: 16, backgroundColor: '#1B365D',
+            }}>
+              <Text style={{ flex: 1, fontSize: 16, fontWeight: '700', color: '#fff' }}>거래처 추가</Text>
+              <TouchableOpacity
+                onPress={() => setAddCustomerModalVisible(false)}
+                style={{
+                  width: 30, height: 30, borderRadius: 15,
+                  backgroundColor: 'rgba(255,255,255,0.15)',
+                  alignItems: 'center', justifyContent: 'center',
+                }}
+              >
+                <Text style={{ fontSize: 14, color: '#fff' }}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            {/* 본문 */}
+            <View style={{ padding: 20 }}>
+              <TextInput
+                value={newCustomerName}
+                onChangeText={setNewCustomerName}
+                placeholder="거래처 이름"
+                placeholderTextColor="#999"
+                style={{
+                  backgroundColor: '#f5f5f5', borderWidth: 1, borderColor: '#e0e0e0',
+                  borderRadius: 10, paddingHorizontal: 16, paddingVertical: 12,
+                  fontSize: 16, color: '#1B365D', marginBottom: 8,
+                }}
+                returnKeyType="next"
+                autoFocus
+              />
+              <TextInput
+                value={newCustomerAliases}
+                onChangeText={setNewCustomerAliases}
+                placeholder="별칭 (쉼표로 구분, 예: 7조, 켈리)"
+                placeholderTextColor="#999"
+                style={{
+                  backgroundColor: '#f5f5f5', borderWidth: 1, borderColor: '#e0e0e0',
+                  borderRadius: 10, paddingHorizontal: 16, paddingVertical: 12,
+                  fontSize: 16, color: '#1B365D', marginBottom: 16,
+                }}
+                returnKeyType="done"
+                onSubmitEditing={handleAddCustomer}
+              />
+              <View style={{ flexDirection: 'row', gap: 10 }}>
+                <TouchableOpacity
+                  onPress={() => setAddCustomerModalVisible(false)}
+                  style={{
+                    flex: 1, paddingVertical: 12, borderRadius: 10,
+                    backgroundColor: '#e5e7eb', alignItems: 'center',
+                  }}
+                >
+                  <Text style={{ color: '#475569', fontSize: 14, fontWeight: '600' }}>취소</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={handleAddCustomer}
+                  style={{
+                    flex: 1.5, paddingVertical: 12, borderRadius: 10,
+                    backgroundColor: '#1B365D', alignItems: 'center',
+                  }}
+                >
+                  <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>추가하기</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* 제품 추가 모달 */}
+      <Modal
+        visible={addProductModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setAddProductModalVisible(false)}
+      >
+        <View style={{
+          flex: 1, backgroundColor: 'rgba(0,0,0,0.5)',
+          justifyContent: 'center', alignItems: 'center', padding: 16,
+        }}>
+          <View style={{
+            backgroundColor: '#fff', borderRadius: 14, width: '100%', maxWidth: 520, overflow: 'hidden',
+          }}>
+            {/* 헤더 */}
+            <View style={{
+              flexDirection: 'row', alignItems: 'center',
+              paddingHorizontal: 20, paddingVertical: 16, backgroundColor: '#1B365D',
+            }}>
+              <Text style={{ flex: 1, fontSize: 16, fontWeight: '700', color: '#fff' }}>제품 추가</Text>
+              <TouchableOpacity
+                onPress={() => setAddProductModalVisible(false)}
+                style={{
+                  width: 30, height: 30, borderRadius: 15,
+                  backgroundColor: 'rgba(255,255,255,0.15)',
+                  alignItems: 'center', justifyContent: 'center',
+                }}
+              >
+                <Text style={{ fontSize: 14, color: '#fff' }}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            {/* 본문 */}
+            <View style={{ padding: 20 }}>
+              <TextInput
+                value={newProductName}
+                onChangeText={setNewProductName}
+                placeholder="제품명"
+                placeholderTextColor="#999"
+                style={{
+                  backgroundColor: '#f5f5f5', borderWidth: 1, borderColor: '#e0e0e0',
+                  borderRadius: 10, paddingHorizontal: 16, paddingVertical: 12,
+                  fontSize: 16, color: '#1B365D', marginBottom: 8,
+                }}
+                returnKeyType="next"
+                autoFocus
+              />
+              {/* 카테고리 */}
+              <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
+                {categories.map((cat) => (
+                  <TouchableOpacity
+                    key={cat.id}
+                    onPress={() => setNewProductCategory(cat.id)}
+                    style={{
+                      flex: 1, paddingVertical: 10, borderRadius: 8,
+                      backgroundColor: newProductCategory === cat.id ? '#1B365D' : '#f5f5f5',
+                      borderWidth: 1, borderColor: newProductCategory === cat.id ? '#1B365D' : '#e0e0e0',
+                    }}
+                  >
+                    <Text style={{
+                      textAlign: 'center', fontSize: 14, fontWeight: '500',
+                      color: newProductCategory === cat.id ? '#ffffff' : '#1B365D',
+                    }}>{cat.name}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <TextInput
+                value={newProductAliases}
+                onChangeText={setNewProductAliases}
+                placeholder="별칭 (쉼표로 구분)"
+                placeholderTextColor="#999"
+                style={{
+                  backgroundColor: '#f5f5f5', borderWidth: 1, borderColor: '#e0e0e0',
+                  borderRadius: 10, paddingHorizontal: 16, paddingVertical: 12,
+                  fontSize: 16, color: '#1B365D', marginBottom: 8,
+                }}
+                returnKeyType="next"
+              />
+              <TextInput
+                value={newProductUnitPrice}
+                onChangeText={(text) => {
+                  const numericValue = text.replace(/[^0-9]/g, "");
+                  const formatted = numericValue.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+                  setNewProductUnitPrice(formatted);
+                }}
+                placeholder="단가 (원) - 선택 사항"
+                placeholderTextColor="#999"
+                style={{
+                  backgroundColor: '#f5f5f5', borderWidth: 1, borderColor: '#e0e0e0',
+                  borderRadius: 10, paddingHorizontal: 16, paddingVertical: 12,
+                  fontSize: 16, color: '#1B365D', marginBottom: 16,
+                }}
+                keyboardType="numeric"
+                returnKeyType="done"
+                onSubmitEditing={handleAddProduct}
+              />
+              <View style={{ flexDirection: 'row', gap: 10 }}>
+                <TouchableOpacity
+                  onPress={() => setAddProductModalVisible(false)}
+                  style={{
+                    flex: 1, paddingVertical: 12, borderRadius: 10,
+                    backgroundColor: '#e5e7eb', alignItems: 'center',
+                  }}
+                >
+                  <Text style={{ color: '#475569', fontSize: 14, fontWeight: '600' }}>취소</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={handleAddProduct}
+                  style={{
+                    flex: 1.5, paddingVertical: 12, borderRadius: 10,
+                    backgroundColor: '#1B365D', alignItems: 'center',
+                  }}
+                >
+                  <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>추가하기</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* 엑셀 가져오기 미리보기 모달 */}
       <Modal
