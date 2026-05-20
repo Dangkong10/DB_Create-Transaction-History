@@ -12,7 +12,7 @@
  *      - 음수 미수금 허용 (선입금/환불 케이스)
  */
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Modal,
   View,
@@ -101,7 +101,13 @@ export function DepositInputModal({ visible, onClose, onSaved }: Props) {
     }
   }, [effectiveDate]);
 
-  /** 모달 열릴 때마다 미수 거래처 로드 + 상태 초기화 */
+  // showToast 를 effect deps 에서 빼기 위해 ref 로 latest 참조.
+  // — context provider 의 value object 가 매 렌더마다 새로 만들어지는 경우에도
+  //   effect 재실행을 막아 모달 열림 직후 잦은 reload 를 방지.
+  const showToastRef = useRef(showToast);
+  showToastRef.current = showToast;
+
+  /** 모달 열릴 때 1회만 미수 거래처 로드 + 상태 초기화 */
   useEffect(() => {
     if (!visible) return;
 
@@ -116,11 +122,11 @@ export function DepositInputModal({ visible, onClose, onSaved }: Props) {
       .then((rows: PendingCustomerRow[]) => setPendingRows(rows))
       .catch((err: any) => {
         console.error('[DepositInputModal] load error:', err);
-        showToast(`미수 거래처 로드 실패: ${err.message ?? err}`, 'error');
+        showToastRef.current(`미수 거래처 로드 실패: ${err.message ?? err}`, 'error');
         setPendingRows([]);
       })
       .finally(() => setLoading(false));
-  }, [visible, showToast]);
+  }, [visible]);
 
   // ===== 핸들러 =====
 
@@ -440,8 +446,9 @@ export function DepositInputModal({ visible, onClose, onSaved }: Props) {
             </Text>
           </View>
 
-          {/* 본문 */}
-          {loading ? (
+          {/* 본문 — rows 가 한 번이라도 들어왔으면 reload 중에도 ScrollView 유지하여
+              스크롤 가용성이 끊기지 않도록 함. */}
+          {pendingRows.length === 0 && loading ? (
             <View style={{ padding: 40, alignItems: 'center' }}>
               <ActivityIndicator />
               <Text style={{ marginTop: 12, color: '#666' }}>미수 거래처 로딩 중...</Text>
@@ -454,6 +461,24 @@ export function DepositInputModal({ visible, onClose, onSaved }: Props) {
             </View>
           ) : (
             <ScrollView style={{ maxHeight: 420 }}>
+              {/* 재로드 중에도 ScrollView 유지 — 얇은 indicator 만 헤더 위에 표시 */}
+              {loading && (
+                <View
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 8,
+                    paddingVertical: 6,
+                    backgroundColor: '#eff6ff',
+                    borderBottomWidth: 1,
+                    borderBottomColor: '#dbeafe',
+                  }}
+                >
+                  <ActivityIndicator size="small" />
+                  <Text style={{ fontSize: 11, color: '#1e40af' }}>갱신 중...</Text>
+                </View>
+              )}
               {/* 테이블 헤더 */}
               <View
                 style={{
@@ -580,11 +605,12 @@ export function DepositInputModal({ visible, onClose, onSaved }: Props) {
             </ScrollView>
           )}
 
-          {/* 조정 모달 (nested) */}
+          {/* 조정 모달 (nested) — effectiveDate 기준으로 조정 저장 */}
           <AdjustmentModal
             visible={adjustingRow !== null}
             customerName={adjustingRow?.customerName ?? ''}
             currentOutstanding={adjustingRow?.outstanding ?? 0}
+            adjustmentDate={effectiveDate}
             onClose={() => setAdjustingRow(null)}
             onSaved={() => {
               // 조정 저장 후 거래처 리스트 새로 로드 + 외부에도 알림 (카운트 갱신)

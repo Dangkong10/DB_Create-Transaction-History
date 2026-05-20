@@ -43,6 +43,13 @@ interface Props {
   visible: boolean;
   customerName: string;
   currentOutstanding: number;
+  /**
+   * 조정이 적용될 기준 날짜 (YYYY-MM-DD).
+   *   - 입금 모달의 effectiveDate (= 사용자가 [확인]으로 적용한 날짜) 를 그대로 전달.
+   *   - 생략 시 todayStr() — 입금 모달 외 진입 경로 대비용 fallback.
+   * 의미: 차액이 이 날짜의 adjustments 레코드로 저장되어, 해당 날짜의 누적 미수금부터 반영됨.
+   */
+  adjustmentDate?: string;
   onClose: () => void;
   /** 저장 성공 시 호출 — 입금 모달이 거래처 리스트 새로 로드 */
   onSaved?: () => void;
@@ -52,6 +59,7 @@ export function AdjustmentModal({
   visible,
   customerName,
   currentOutstanding,
+  adjustmentDate,
   onClose,
   onSaved,
 }: Props) {
@@ -79,13 +87,14 @@ export function AdjustmentModal({
     }
     try {
       setSaving(true);
+      const appliedDate = adjustmentDate ?? todayStr();
       await saveAdjustment({
         customerName,
-        adjustmentDate: todayStr(),
+        adjustmentDate: appliedDate,
         amount: delta,
       });
       showToast(
-        `${customerName} 미수금 조정 완료 (${delta > 0 ? '+' : ''}${formatNumber(delta)}원)`,
+        `${customerName} 미수금 조정 완료 (${appliedDate} 기준, ${delta > 0 ? '+' : ''}${formatNumber(delta)}원)`,
         'success',
       );
       onSaved?.();
@@ -96,7 +105,7 @@ export function AdjustmentModal({
     } finally {
       setSaving(false);
     }
-  }, [delta, customerName, showToast, onSaved, onClose]);
+  }, [delta, customerName, adjustmentDate, showToast, onSaved, onClose]);
 
   const deltaColor = delta > 0 ? '#dc2626' : delta < 0 ? '#16a34a' : '#94a3b8';
   const deltaLabel = delta > 0 ? '미수금 증가' : delta < 0 ? '미수금 감소' : '변동 없음';
@@ -164,7 +173,9 @@ export function AdjustmentModal({
                 borderBottomColor: '#e5e7eb',
               }}
             >
-              <Text style={{ fontSize: 13, color: '#666' }}>현재 미수금 (시스템)</Text>
+              <Text style={{ fontSize: 13, color: '#666' }}>
+                {adjustmentDate ? `~ ${adjustmentDate} 미수금` : '현재 미수금 (시스템)'}
+              </Text>
               <Text
                 style={{
                   fontSize: 16,
@@ -176,6 +187,27 @@ export function AdjustmentModal({
                 {formatNumber(currentOutstanding)}원
               </Text>
             </View>
+
+            {/* 조정 적용 날짜 안내 — 사용자가 어느 날짜의 누적 미수금을 바꾸는지 명확히 */}
+            {adjustmentDate && (
+              <View
+                style={{
+                  marginBottom: 14,
+                  paddingHorizontal: 12,
+                  paddingVertical: 8,
+                  borderRadius: 6,
+                  backgroundColor: '#fef3c7',
+                  borderWidth: 1,
+                  borderColor: '#fde68a',
+                }}
+              >
+                <Text style={{ fontSize: 12, color: '#92400e' }}>
+                  조정 적용 날짜:{' '}
+                  <Text style={{ fontWeight: '700' }}>{adjustmentDate}</Text>
+                  {'\n'}이 날짜의 adjustments 레코드로 저장되어, 해당일부터의 누적 미수금에 반영됩니다.
+                </Text>
+              </View>
+            )}
 
             {/* 조정 후 금액 입력 */}
             <Text style={{ fontSize: 13, color: '#1B365D', fontWeight: '600', marginBottom: 8 }}>

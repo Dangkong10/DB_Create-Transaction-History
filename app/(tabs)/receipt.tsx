@@ -74,9 +74,17 @@ export default function ReceiptScreen() {
     scrollViewRef.current?.scrollTo({ y: 0, animated: true });
   };
 
-  const loadData = async () => {
+  /**
+   * loadData
+   *   isInitial=true  → 첫 mount 1회. isLoading=true 로 full-screen spinner 표시.
+   *   isInitial=false → focus / transaction:changed 등의 background refresh.
+   *                     isLoading 을 건드리지 않아 receipt 트리가 unmount/remount 되지 않게 함.
+   *                     (이전엔 isLoading 토글로 트리 전체가 갈리며 DepositInputModal 이
+   *                      매번 새로 마운트되어 fetch 가 여러 번 일어남.)
+   */
+  const loadData = async (isInitial = false) => {
     try {
-      setIsLoading(true);
+      if (isInitial) setIsLoading(true);
 
       // 거래처/제품은 독립적으로 로드 (AsyncStorage, 항상 성공)
       const [loadedCustomers, loadedProducts] = await Promise.all([
@@ -122,19 +130,30 @@ export default function ReceiptScreen() {
       console.error("거래 내역 조회 실패:", error);
       showToast("거래 내역을 불러오는데 실패했습니다.", "error");
     } finally {
-      setIsLoading(false);
+      if (isInitial) setIsLoading(false);
     }
   };
 
   useEffect(() => {
-    loadData();
+    loadData(true); // 첫 mount — full-screen spinner 표시
   }, []);
+
+  // 입금 모달 열린 동안에는 background refresh 를 건너뛰기 위한 ref.
+  // ref 로 두면 listener 재등록 없이 최신 visible 상태 참조 가능.
+  const depositModalVisibleRef = useRef(false);
+  depositModalVisibleRef.current = depositModalVisible;
 
   // 다른 페이지에서 저장/수정/삭제 시 즉시 반영
   useEffect(() => {
-    const handleChanged = () => loadData();
+    const handleChanged = () => {
+      if (depositModalVisibleRef.current) return; // 모달 열려있으면 skip
+      loadData();
+    };
     window.addEventListener('transaction:changed', handleChanged);
-    const handleFocus = () => loadData();
+    const handleFocus = () => {
+      if (depositModalVisibleRef.current) return; // 모달 열려있으면 skip
+      loadData();
+    };
     window.addEventListener('focus', handleFocus);
     return () => {
       window.removeEventListener('transaction:changed', handleChanged);
