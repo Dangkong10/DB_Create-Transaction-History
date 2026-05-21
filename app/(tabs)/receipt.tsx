@@ -24,7 +24,7 @@ import { searchCustomers } from "@/lib/search-utils";
 import { matchChosung } from "@/lib/hangul-utils";
 import { aggregateTransactions, groupByReceipt, filterByDate, type ReceiptGroup } from "@/lib/excel-utils";
 import { getPendingCustomers } from "@/lib/payments";
-import { DepositInputModal } from "@/components/deposit-input-modal";
+import { useRouter } from "expo-router";
 import type { Customer, Product } from "@/lib/types";
 import * as Haptics from "expo-haptics";
 
@@ -34,6 +34,7 @@ const SHADOW = Platform.OS === 'web'
 
 export default function ReceiptScreen() {
   const { showToast } = useToast();
+  const router = useRouter();
   const [selectedDate, setSelectedDate] = useState<string>("");
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -45,8 +46,6 @@ export default function ReceiptScreen() {
   const [showScrollTop, setShowScrollTop] = useState(false);
   /** 입금 입력 대기 중인 거래처 수 (미수 > 0). 마이그레이션 미적용 시 0. */
   const [pendingCount, setPendingCount] = useState(0);
-  /** 입금 입력 모달 열림 상태 */
-  const [depositModalVisible, setDepositModalVisible] = useState(false);
 
   /** 미수 거래처 수 갱신 (실패해도 UI 안 깨짐) */
   const refreshPendingCount = async () => {
@@ -60,9 +59,9 @@ export default function ReceiptScreen() {
     }
   };
 
-  /** [입금 입력] 카드 클릭 — 모달 열기 */
+  /** [입금 입력] 카드 클릭 — /deposit 전체화면으로 이동 */
   const handleDepositInputClick = () => {
-    setDepositModalVisible(true);
+    router.push('/deposit');
   };
 
   const handleScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
@@ -138,22 +137,11 @@ export default function ReceiptScreen() {
     loadData(true); // 첫 mount — full-screen spinner 표시
   }, []);
 
-  // 입금 모달 열린 동안에는 background refresh 를 건너뛰기 위한 ref.
-  // ref 로 두면 listener 재등록 없이 최신 visible 상태 참조 가능.
-  const depositModalVisibleRef = useRef(false);
-  depositModalVisibleRef.current = depositModalVisible;
-
   // 다른 페이지에서 저장/수정/삭제 시 즉시 반영
   useEffect(() => {
-    const handleChanged = () => {
-      if (depositModalVisibleRef.current) return; // 모달 열려있으면 skip
-      loadData();
-    };
+    const handleChanged = () => loadData();
     window.addEventListener('transaction:changed', handleChanged);
-    const handleFocus = () => {
-      if (depositModalVisibleRef.current) return; // 모달 열려있으면 skip
-      loadData();
-    };
+    const handleFocus = () => loadData();
     window.addEventListener('focus', handleFocus);
     return () => {
       window.removeEventListener('transaction:changed', handleChanged);
@@ -412,45 +400,6 @@ export default function ReceiptScreen() {
               </TouchableOpacity>
             </View>
 
-            {/* 흐름 안내 */}
-            <View style={{
-              backgroundColor: '#f0f0f0', borderRadius: 14, padding: 16,
-              flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-              flexWrap: 'wrap', gap: 8,
-            }}>
-              <View style={{
-                backgroundColor: '#ffffff', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 8,
-              }}>
-                <Text style={{ fontSize: 14, color: '#1B365D', fontWeight: '600' }}>
-                  위 버튼을 누르면
-                </Text>
-              </View>
-              <Text style={{ fontSize: 14, color: '#999' }}>→</Text>
-              <View style={{
-                backgroundColor: '#ffffff', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 8,
-              }}>
-                <Text style={{ fontSize: 14, color: '#1B365D', fontWeight: '600' }}>
-                  미리보기 팝업이 열림
-                </Text>
-              </View>
-              <Text style={{ fontSize: 14, color: '#999' }}>→</Text>
-              <View style={{
-                backgroundColor: '#ffffff', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 8,
-              }}>
-                <Text style={{ fontSize: 14, color: '#1B365D', fontWeight: '600' }}>
-                  내용 수정 가능
-                </Text>
-              </View>
-              <Text style={{ fontSize: 14, color: '#999' }}>→</Text>
-              <View style={{
-                backgroundColor: '#ffffff', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 8,
-              }}>
-                <Text style={{ fontSize: 14, color: '#1B365D', fontWeight: '600' }}>
-                  프린트 버튼으로 인쇄
-                </Text>
-              </View>
-            </View>
-
             {/* ===== 특정 거래처 영수증 섹션 ===== */}
             <View style={{ gap: 16 }}>
               {/* (1) 섹션 구분선 + 타이틀 */}
@@ -588,15 +537,6 @@ export default function ReceiptScreen() {
           </View>
         </ScrollView>
         <ScrollToTopFab visible={showScrollTop} onPress={handleScrollToTop} />
-
-        <DepositInputModal
-          visible={depositModalVisible}
-          onClose={() => setDepositModalVisible(false)}
-          onSaved={() => {
-            // 저장 후 미수 카운트 갱신
-            void refreshPendingCount();
-          }}
-        />
       </ResponsiveContainer>
     </ScreenContainer>
   );

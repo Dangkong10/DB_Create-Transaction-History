@@ -67,6 +67,32 @@ async function getUserIdOrThrow(): Promise<string> {
   return session.user.id;
 }
 
+/**
+ * Supabase REST 의 기본 페이지 크기(1000) 한계를 우회하기 위한 페이지네이션 헬퍼.
+ *   buildQuery: 매 호출마다 *새로운* PostgrestFilterBuilder 를 반환해야 한다
+ *   (PostgrestFilterBuilder 는 한 번 await 하면 재사용 불가하므로).
+ *
+ * 1000 건씩 끊어 누적. 한 페이지가 1000 미만이면 종료.
+ */
+async function fetchAllRows<T>(
+  buildQuery: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: any }>,
+): Promise<T[]> {
+  const PAGE = 1000;
+  const all: T[] = [];
+  let from = 0;
+  // 안전장치: 50 페이지(=5만 건) 이상은 비정상 — 무한 루프 방지.
+  for (let i = 0; i < 50; i++) {
+    const to = from + PAGE - 1;
+    const { data, error } = await buildQuery(from, to);
+    if (error) throw error;
+    if (!data || data.length === 0) break;
+    all.push(...data);
+    if (data.length < PAGE) break;
+    from += PAGE;
+  }
+  return all;
+}
+
 // ==================== 계산 — 현재 미수금 ====================
 
 /**
@@ -79,40 +105,48 @@ async function getUserIdOrThrow(): Promise<string> {
 export async function getAllOutstandings(): Promise<Map<string, number>> {
   const userId = await getUserIdOrThrow();
 
-  // 매출 총합 (거래처별)
-  const { data: txRows, error: txErr } = await supabase
-    .from('transactions')
-    .select('customer_name, quantity, unit_price')
-    .eq('user_id', userId);
-
-  if (txErr) {
+  // 매출 총합 (거래처별) — 1000건 한계 우회 위해 페이지네이션
+  let txRows: { customer_name: string; quantity: number | null; unit_price: number | null }[];
+  try {
+    txRows = await fetchAllRows<{ customer_name: string; quantity: number | null; unit_price: number | null }>((from, to) =>
+      supabase
+        .from('transactions')
+        .select('customer_name, quantity, unit_price')
+        .eq('user_id', userId)
+        .range(from, to),
+    );
+  } catch (txErr: any) {
     console.error('[getAllOutstandings] tx error:', txErr);
-    throw new Error(`매출 조회 실패: ${txErr.message}`);
+    throw new Error(`매출 조회 실패: ${txErr.message ?? txErr}`);
   }
 
   // 입금 총합 (거래처별)
-  const { data: payRows, error: payErr } = await supabase
-    .from('payments')
-    .select('customer_name, amount')
-    .eq('user_id', userId);
-
-  if (payErr) {
+  let payRows: { customer_name: string; amount: number }[];
+  try {
+    payRows = await fetchAllRows<{ customer_name: string; amount: number }>((from, to) =>
+      supabase
+        .from('payments')
+        .select('customer_name, amount')
+        .eq('user_id', userId)
+        .range(from, to),
+    );
+  } catch (payErr: any) {
     console.error('[getAllOutstandings] pay error:', payErr);
-    throw new Error(`입금 조회 실패: ${payErr.message}`);
+    throw new Error(`입금 조회 실패: ${payErr.message ?? payErr}`);
   }
 
   // 조정 총합 (거래처별). 테이블 미적용 환경에서도 0으로 fallback.
   let adjRows: { customer_name: string; amount: number }[] = [];
-  {
-    const { data, error } = await supabase
-      .from('adjustments')
-      .select('customer_name, amount')
-      .eq('user_id', userId);
-    if (error) {
-      console.warn('[getAllOutstandings] adjustments fetch 실패 (0으로 처리):', error.message);
-    } else {
-      adjRows = data ?? [];
-    }
+  try {
+    adjRows = await fetchAllRows<{ customer_name: string; amount: number }>((from, to) =>
+      supabase
+        .from('adjustments')
+        .select('customer_name, amount')
+        .eq('user_id', userId)
+        .range(from, to),
+    );
+  } catch (err: any) {
+    console.warn('[getAllOutstandings] adjustments fetch 실패 (0으로 처리):', err.message ?? err);
   }
 
   const map = new Map<string, number>();
@@ -162,43 +196,51 @@ export async function getReceiptBalancesForDate(
 ): Promise<Map<string, ReceiptBalances>> {
   const userId = await getUserIdOrThrow();
 
-  // 매출 — 전체 (전잔고 계산 위해 < D 필요, 당일매출 위해 = D 필요)
-  const { data: txRows, error: txErr } = await supabase
-    .from('transactions')
-    .select('customer_name, quantity, unit_price, date')
-    .eq('user_id', userId)
-    .lte('date', date); // ≤ D 까지만 가져옴 (오늘 이후 매출은 무관)
-
-  if (txErr) {
+  // 매출 — 전체 (전잔고 계산 위해 < D 필요, 당일매출 위해 = D 필요). 1000건 한계 우회.
+  let txRows: { customer_name: string; quantity: number | null; unit_price: number | null; date: string }[];
+  try {
+    txRows = await fetchAllRows((from, to) =>
+      supabase
+        .from('transactions')
+        .select('customer_name, quantity, unit_price, date')
+        .eq('user_id', userId)
+        .lte('date', date)
+        .range(from, to),
+    );
+  } catch (txErr: any) {
     console.error('[getReceiptBalancesForDate] tx error:', txErr);
-    throw new Error(`매출 조회 실패: ${txErr.message}`);
+    throw new Error(`매출 조회 실패: ${txErr.message ?? txErr}`);
   }
 
   // 입금 — 입금일 ≤ D
-  const { data: payRows, error: payErr } = await supabase
-    .from('payments')
-    .select('customer_name, amount, payment_date')
-    .eq('user_id', userId)
-    .lte('payment_date', date);
-
-  if (payErr) {
+  let payRows: { customer_name: string; amount: number; payment_date: string }[];
+  try {
+    payRows = await fetchAllRows((from, to) =>
+      supabase
+        .from('payments')
+        .select('customer_name, amount, payment_date')
+        .eq('user_id', userId)
+        .lte('payment_date', date)
+        .range(from, to),
+    );
+  } catch (payErr: any) {
     console.error('[getReceiptBalancesForDate] pay error:', payErr);
-    throw new Error(`입금 조회 실패: ${payErr.message}`);
+    throw new Error(`입금 조회 실패: ${payErr.message ?? payErr}`);
   }
 
   // 조정 — 조정일 ≤ D (테이블 미적용 환경에서도 안전)
   let adjRows: { customer_name: string; amount: number; adjustment_date: string }[] = [];
-  {
-    const { data, error } = await supabase
-      .from('adjustments')
-      .select('customer_name, amount, adjustment_date')
-      .eq('user_id', userId)
-      .lte('adjustment_date', date);
-    if (error) {
-      console.warn('[getReceiptBalancesForDate] adjustments fetch 실패 (0으로 처리):', error.message);
-    } else {
-      adjRows = data ?? [];
-    }
+  try {
+    adjRows = await fetchAllRows((from, to) =>
+      supabase
+        .from('adjustments')
+        .select('customer_name, amount, adjustment_date')
+        .eq('user_id', userId)
+        .lte('adjustment_date', date)
+        .range(from, to),
+    );
+  } catch (err: any) {
+    console.warn('[getReceiptBalancesForDate] adjustments fetch 실패 (0으로 처리):', err.message ?? err);
   }
 
   // 거래처별로 prev/daily 누적
@@ -313,35 +355,50 @@ export async function getPendingCustomersAsOfDate(
 
   const userId = await getUserIdOrThrow();
 
-  const { data: txRows, error: txErr } = await supabase
-    .from('transactions')
-    .select('customer_name, quantity, unit_price')
-    .eq('user_id', userId)
-    .lte('date', date);
-  if (txErr) throw new Error(`매출 조회 실패: ${txErr.message}`);
+  // 1000건 한계 우회 위해 페이지네이션
+  let txRows: { customer_name: string; quantity: number | null; unit_price: number | null }[];
+  try {
+    txRows = await fetchAllRows((from, to) =>
+      supabase
+        .from('transactions')
+        .select('customer_name, quantity, unit_price')
+        .eq('user_id', userId)
+        .lte('date', date)
+        .range(from, to),
+    );
+  } catch (txErr: any) {
+    throw new Error(`매출 조회 실패: ${txErr.message ?? txErr}`);
+  }
 
-  const { data: payRows, error: payErr } = await supabase
-    .from('payments')
-    .select('customer_name, amount')
-    .eq('user_id', userId)
-    .lte('payment_date', date);
-  if (payErr) throw new Error(`입금 조회 실패: ${payErr.message}`);
+  let payRows: { customer_name: string; amount: number }[];
+  try {
+    payRows = await fetchAllRows((from, to) =>
+      supabase
+        .from('payments')
+        .select('customer_name, amount')
+        .eq('user_id', userId)
+        .lte('payment_date', date)
+        .range(from, to),
+    );
+  } catch (payErr: any) {
+    throw new Error(`입금 조회 실패: ${payErr.message ?? payErr}`);
+  }
 
   let adjRows: { customer_name: string; amount: number }[] = [];
-  {
-    const { data, error } = await supabase
-      .from('adjustments')
-      .select('customer_name, amount')
-      .eq('user_id', userId)
-      .lte('adjustment_date', date);
-    if (error) {
-      console.warn(
-        '[getPendingCustomersAsOfDate] adjustments fetch 실패 (0으로 처리):',
-        error.message,
-      );
-    } else {
-      adjRows = data ?? [];
-    }
+  try {
+    adjRows = await fetchAllRows((from, to) =>
+      supabase
+        .from('adjustments')
+        .select('customer_name, amount')
+        .eq('user_id', userId)
+        .lte('adjustment_date', date)
+        .range(from, to),
+    );
+  } catch (err: any) {
+    console.warn(
+      '[getPendingCustomersAsOfDate] adjustments fetch 실패 (0으로 처리):',
+      err.message ?? err,
+    );
   }
 
   const map = new Map<string, number>();
@@ -464,6 +521,118 @@ export interface AdjustmentInput {
 }
 
 /**
+ * 조정 기록 한 줄.
+ */
+export interface Adjustment {
+  id: string;
+  customerName: string;
+  /** YYYY-MM-DD */
+  adjustmentDate: string;
+  /** ±정수. 양수=미수↑, 음수=미수↓ */
+  amount: number;
+  /** YYYY-MM-DD HH:mm:ss */
+  createdAt: string;
+}
+
+function rowToAdjustment(row: any): Adjustment {
+  return {
+    id: String(row.id),
+    customerName: row.customer_name,
+    adjustmentDate: row.adjustment_date,
+    amount: row.amount,
+    createdAt: formatCreatedAt(row.created_at),
+  };
+}
+
+/**
+ * 모든 조정 내역 — 날짜 내림차순 (보관함용).
+ */
+export async function getAllAdjustments(): Promise<Adjustment[]> {
+  const userId = await getUserIdOrThrow();
+
+  const { data, error } = await supabase
+    .from('adjustments')
+    .select('*')
+    .eq('user_id', userId)
+    .order('adjustment_date', { ascending: false })
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    console.error('[getAllAdjustments] Error:', error);
+    throw new Error(`조정 내역 조회 실패: ${error.message}`);
+  }
+
+  return (data ?? []).map(rowToAdjustment);
+}
+
+/**
+ * 조정 수정 — 거래처/날짜/금액 모두 변경 가능.
+ *   - amount ≠ 0 (정수)
+ *   - adjustmentDate ≤ 오늘
+ */
+export async function updateAdjustment(
+  id: string,
+  fields: { customerName?: string; adjustmentDate?: string; amount?: number },
+): Promise<Adjustment> {
+  if (fields.amount !== undefined) {
+    if (!Number.isInteger(fields.amount) || fields.amount === 0) {
+      throw new Error('조정액은 0이 아닌 정수여야 합니다.');
+    }
+  }
+  if (fields.adjustmentDate !== undefined) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(fields.adjustmentDate)) {
+      throw new Error(`조정 일자 형식 오류 (YYYY-MM-DD): ${fields.adjustmentDate}`);
+    }
+    if (fields.adjustmentDate > todayStr()) {
+      throw new Error(`미래 날짜로는 수정할 수 없습니다: ${fields.adjustmentDate}`);
+    }
+  }
+  if (fields.customerName !== undefined && !fields.customerName.trim()) {
+    throw new Error('거래처명이 비어있습니다.');
+  }
+
+  const userId = await getUserIdOrThrow();
+
+  const patch: Record<string, any> = {};
+  if (fields.customerName !== undefined) patch.customer_name = fields.customerName;
+  if (fields.adjustmentDate !== undefined) patch.adjustment_date = fields.adjustmentDate;
+  if (fields.amount !== undefined) patch.amount = fields.amount;
+
+  const { data, error } = await supabase
+    .from('adjustments')
+    .update(patch)
+    .eq('id', id)
+    .eq('user_id', userId)
+    .select()
+    .single();
+
+  if (error) {
+    console.error('[updateAdjustment] Error:', error);
+    throw new Error(`조정 수정 실패: ${error.message}`);
+  }
+
+  return rowToAdjustment(data);
+}
+
+/**
+ * 조정 삭제.
+ */
+export async function deleteAdjustment(id: string): Promise<void> {
+  const userId = await getUserIdOrThrow();
+
+  const { error } = await supabase
+    .from('adjustments')
+    .delete()
+    .eq('id', id)
+    .eq('user_id', userId);
+
+  if (error) {
+    console.error('[deleteAdjustment] Error:', error);
+    throw new Error(`조정 삭제 실패: ${error.message}`);
+  }
+}
+
+/**
  * 미수금 조정 저장.
  *
  *   "조정 후 미수금" UI 입력 → 호출자가 (조정후 - 현재미수금) = 차액 계산 → 이 함수에 amount 로 전달.
@@ -502,6 +671,94 @@ export async function saveAdjustment(item: AdjustmentInput): Promise<void> {
 }
 
 // ==================== 입금 기록 조회 (audit) ====================
+
+/**
+ * 모든 입금 기록 — 날짜 내림차순 (보관함용).
+ */
+export async function getAllPayments(): Promise<Payment[]> {
+  const userId = await getUserIdOrThrow();
+
+  const { data, error } = await supabase
+    .from('payments')
+    .select('*')
+    .eq('user_id', userId)
+    .order('payment_date', { ascending: false })
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    console.error('[getAllPayments] Error:', error);
+    throw new Error(`입금 기록 조회 실패: ${error.message}`);
+  }
+
+  return (data ?? []).map(rowToPayment);
+}
+
+/**
+ * 입금 기록 수정 — 거래처/날짜/금액 모두 변경 가능.
+ *   - amount > 0
+ *   - paymentDate ≤ 오늘
+ */
+export async function updatePayment(
+  id: string,
+  fields: { customerName?: string; paymentDate?: string; amount?: number },
+): Promise<Payment> {
+  if (fields.amount !== undefined) {
+    if (!Number.isInteger(fields.amount) || fields.amount <= 0) {
+      throw new Error('입금금액은 양의 정수여야 합니다.');
+    }
+  }
+  if (fields.paymentDate !== undefined) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(fields.paymentDate)) {
+      throw new Error(`입금일자 형식 오류 (YYYY-MM-DD): ${fields.paymentDate}`);
+    }
+    if (fields.paymentDate > todayStr()) {
+      throw new Error(`미래 날짜로는 수정할 수 없습니다: ${fields.paymentDate}`);
+    }
+  }
+  if (fields.customerName !== undefined && !fields.customerName.trim()) {
+    throw new Error('거래처명이 비어있습니다.');
+  }
+
+  const userId = await getUserIdOrThrow();
+
+  const patch: Record<string, any> = {};
+  if (fields.customerName !== undefined) patch.customer_name = fields.customerName;
+  if (fields.paymentDate !== undefined) patch.payment_date = fields.paymentDate;
+  if (fields.amount !== undefined) patch.amount = fields.amount;
+
+  const { data, error } = await supabase
+    .from('payments')
+    .update(patch)
+    .eq('id', id)
+    .eq('user_id', userId)
+    .select()
+    .single();
+
+  if (error) {
+    console.error('[updatePayment] Error:', error);
+    throw new Error(`입금 수정 실패: ${error.message}`);
+  }
+
+  return rowToPayment(data);
+}
+
+/**
+ * 입금 기록 삭제.
+ */
+export async function deletePayment(id: string): Promise<void> {
+  const userId = await getUserIdOrThrow();
+
+  const { error } = await supabase
+    .from('payments')
+    .delete()
+    .eq('id', id)
+    .eq('user_id', userId);
+
+  if (error) {
+    console.error('[deletePayment] Error:', error);
+    throw new Error(`입금 삭제 실패: ${error.message}`);
+  }
+}
 
 /**
  * 특정 거래처의 입금 기록 전체 (날짜 내림차순).

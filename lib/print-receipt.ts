@@ -94,16 +94,20 @@ function buildReceiptHtml(
     const pageReceipts = normal.slice(i, i + 6);
 
     parts.push(`<div class="page-divider normal">📄 ${pageNum}페이지 — 일반 영수증</div>`);
-    parts.push(`<div class="a4-page full"><span class="a4-label">${pageNum} / ${totalPages}</span>`);
-    parts.push('<div class="r-grid">');
+    // padding 0 으로 A4 가장자리까지 사용, grid 가 페이지 본문을 전부 채워 6칸이 균등 분배되도록.
+    // 실제 프린트의 인쇄 가능 영역(보통 5mm 안전 여백)은 프린터 드라이버가 자동 처리.
+    parts.push(`<div class="a4-page full" style="padding:0; min-height:297mm; position:relative;"><span class="a4-label" style="top:2mm; right:3mm;">${pageNum} / ${totalPages}</span>`);
+    parts.push('<div class="r-grid" style="height:297mm; grid-template-rows:repeat(3, 1fr); gap:0;">');
 
     for (let slot = 0; slot < 6; slot++) {
       if (slot < pageReceipts.length) {
-        parts.push('<div class="r-block">');
-        parts.push(buildSingleReceipt(pageReceipts[slot], products, specialPrices, 6, balancesByCustomer.get(pageReceipts[slot].customerName)?.previousBalance ?? 0));
+        parts.push('<div class="r-block" style="padding:2mm; border:0.5px solid #ddd; display:flex; flex-direction:column; overflow:hidden;">');
+        // maxRows: 6 → 8 (사용자 요구로 품목 행 2개 추가). 행 8개여도
+        // 글씨/행높이 기준으로 1/3 페이지 99mm 안에 들어가도록 행 높이 17pt 유지.
+        parts.push(buildSingleReceipt(pageReceipts[slot], products, specialPrices, 8, balancesByCustomer.get(pageReceipts[slot].customerName)?.previousBalance ?? 0));
         parts.push('</div>');
       } else {
-        parts.push('<div class="r-block"><div class="empty-slot"><div class="empty-slot-inner">빈 슬롯</div></div></div>');
+        parts.push('<div class="r-block" style="padding:2mm; border:0.5px solid #ddd; display:flex; flex-direction:column;"><div class="empty-slot" style="flex:1;"><div class="empty-slot-inner">빈 슬롯</div></div></div>');
       }
     }
 

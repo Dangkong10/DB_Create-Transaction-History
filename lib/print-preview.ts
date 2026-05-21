@@ -74,17 +74,17 @@ const BASE_STYLES = `
     box-shadow: 0 0 0 2px #f0c040;
   }
 
-  /* ===== 테이블 공통 ===== */
+  /* ===== 테이블 공통 (집계표 전용. A4 한 장에 45행 들어가도록 11pt/14pt) ===== */
   .ppm-table { width: 100%; border-collapse: collapse; }
   .ppm-table th, .ppm-table td {
     border: 1px solid #000; padding: 0 4px;
-    height: 17pt; line-height: 17pt; font-size: 13pt;
+    height: 14pt; line-height: 14pt; font-size: 11pt;
   }
   .ppm-table th {
     background: #e8e8e8; font-weight: 700; text-align: center;
   }
 
-  /* ===== 영수증 테이블 (12pt) ===== */
+  /* ===== 영수증 테이블 (기본 12pt) ===== */
   .receipt-table { width: 100%; border-collapse: collapse; }
   .receipt-table th, .receipt-table td {
     border: 1px solid #000; padding: 0 2px;
@@ -94,7 +94,8 @@ const BASE_STYLES = `
   .rc { text-align: right; font-weight: 700; }
   .rl { font-weight: 700; background: #f5f5f5; text-align: center; width: 35%; }
   .rv { text-align: center; }
-  .ri th { font-weight: 700; background: #f0f0f0; text-align: center; font-size: 11pt; }
+  /* 품목/수량/공급대가 라벨만 1pt 키움 (11pt → 12pt) */
+  .ri th { font-weight: 700; background: #f0f0f0; text-align: center; font-size: 12pt; }
   .ri td:nth-child(1) { text-align: left; }
   .ri td:nth-child(2) { text-align: center; }
   .ri td:nth-child(3) { text-align: right; }
@@ -127,7 +128,7 @@ const BASE_STYLES = `
   @media (max-width: 800px) {
     .a4-page { width: 100%; min-height: auto !important; padding: 6mm 4mm; }
     .page-divider { width: 100%; }
-    .ppm-table th, .ppm-table td { font-size: 10pt; height: 14pt; line-height: 14pt; }
+    .ppm-table th, .ppm-table td { font-size: 9pt; height: 12pt; line-height: 12pt; }
     .receipt-table th, .receipt-table td { font-size: 9pt; height: 13pt; line-height: 13pt; }
     .over-grid-1 { max-width: 100%; }
   }
@@ -144,12 +145,20 @@ const BASE_STYLES = `
     .a4-page {
       box-shadow: none; margin: 0; width: 100%;
       page-break-after: always;
+      min-height: 0 !important; /* 콘텐츠 길이에 맞춰 자연스럽게 페이지 분할 */
     }
     .a4-page:last-child { page-break-after: avoid; }
     .page-divider { display: none !important; }
     [contenteditable] {
       background: transparent !important;
       box-shadow: none !important;
+    }
+    /* 표가 길어 한 페이지를 넘으면 행 단위로 자동 분할 + 헤더 페이지마다 반복 */
+    .ppm-table thead { display: table-header-group; }
+    .ppm-table tfoot { display: table-row-group; }
+    .ppm-table tr {
+      page-break-inside: avoid;
+      break-inside: avoid;
     }
   }
 `;
