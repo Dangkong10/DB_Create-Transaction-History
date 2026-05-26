@@ -1,13 +1,24 @@
 /**
  * 당일 집계표 프린트 미리보기
  *
- * A4 반장 (148.5mm) 기준, 수정 가능한 테이블 → 프린트
+ * A4 반장 (148.5mm) 기준, 수정 가능한 테이블 → 프린트.
+ *
+ * 5열 구조:
+ *   상호 / 전잔고 / 매출금액 / 입금 / 총잔액
+ *   총잔액 = 전잔고 + 매출금액 − 입금   (payments.ts 의 식과 동일)
  */
 
 import { openPrintModal, formatNumber } from './print-preview';
 import { aggregateDailySummary, type DailySummaryRow } from './daily-summary-excel';
 import type { Transaction } from './excel-utils';
 import { getReceiptBalancesForDate } from './payments';
+
+interface RowBalance {
+  /** 전잔고 — D 직전 잔고 */
+  prev: number;
+  /** 당일 입금 */
+  payment: number;
+}
 
 /**
  * 당일 집계표 미리보기 모달 열기
@@ -21,28 +32,28 @@ export async function openDailySummaryPreview(
   const filtered = transactions.filter((t) => t.date.startsWith(dateStr));
   const aggregated = aggregateDailySummary(filtered, getUnitPrice);
 
-  // 전잔고 조회 (실패해도 집계표는 정상 출력)
-  const balances = new Map<string, number>();
+  // 전잔고 / 당일입금 조회 (실패해도 집계표는 정상 출력)
+  const balances = new Map<string, RowBalance>();
   try {
     const balanceMap = await getReceiptBalancesForDate(dateStr);
     for (const [name, b] of balanceMap) {
-      balances.set(name, b.previousBalance);
+      balances.set(name, { prev: b.previousBalance, payment: b.dailyPayment });
     }
   } catch (err) {
-    console.warn('[openDailySummaryPreview] 전잔고 조회 실패 (집계표는 그대로 출력):', err);
+    console.warn('[openDailySummaryPreview] 잔고 조회 실패 (집계표는 그대로 출력):', err);
   }
 
-  // 당일 매출이 없지만 전잔고(>0)가 남은 거래처도 row 로 추가.
-  // — 사용자가 "당일날 가져가지 않아도 잔고가 있으면 내역서에 떠야" 한다고 요구.
+  // 당일 매출이 없어도 (전잔고 OR 입금 OR 0이 아닌 잔고) 있으면 row 로 추가.
   const namesInAggregated = new Set(aggregated.map((r) => r.customerName));
   const extras: DailySummaryRow[] = [];
-  for (const [name, prev] of balances) {
-    if (prev > 0 && !namesInAggregated.has(name)) {
+  for (const [name, b] of balances) {
+    if (namesInAggregated.has(name)) continue;
+    if (b.prev > 0 || b.payment > 0) {
       extras.push({
         customerName: name,
-        prevBalance: prev,
+        prevBalance: b.prev,
         salesAmount: 0,
-        totalBalance: prev,
+        totalBalance: b.prev - b.payment,
       });
     }
   }
@@ -55,7 +66,6 @@ export async function openDailySummaryPreview(
     throw new Error('선택한 날짜에 해당하는 거래 내역이 없습니다.');
   }
 
-  // HTML 생성
   const contentHtml = buildDailySummaryHtml(rows, dateStr, balances);
 
   openPrintModal({
@@ -73,31 +83,25 @@ export async function openDailySummaryPreview(
  *   A4 297mm × 210mm, padding 12mm 위아래 → 본문 273mm.
  *   타이틀/날짜/페이지번호/표헤더 ≈ 32mm, 합계 행/여유 ≈ 10mm,
  *   잔여 ~231mm, 한 행 14pt(≈5.1mm) → 45행 확보.
- *
- * 즉 거래처 45개 이하면 박스 1개 (분할 X), 46개 이상부터 박스 2개로 분할.
  */
 const ROWS_PER_PAGE = 45;
 
-/**
- * HTML 생성
- *
- *   콘텐츠가 한 박스에 안 들어갈 때만 페이지 분할. ROWS_PER_PAGE 이하면 박스 1개 그대로.
- *   각 페이지에 타이틀/날짜/표 헤더 반복. 합계 행은 마지막 페이지에만 표시.
- *   여러 페이지일 땐 우상단에 'N / total' 페이지번호 표시 (한 페이지면 생략).
- */
 function buildDailySummaryHtml(
   rows: DailySummaryRow[],
   dateStr: string,
-  balances: Map<string, number>,
+  balances: Map<string, RowBalance>,
 ): string {
   // 전체 합계 (마지막 페이지에만 표시)
-  let totalSales = 0;
   let totalPrev = 0;
+  let totalSales = 0;
+  let totalPayment = 0;
   rows.forEach((r) => {
+    const b = balances.get(r.customerName);
+    totalPrev += b?.prev ?? 0;
     totalSales += r.salesAmount;
-    totalPrev += balances.get(r.customerName) ?? 0;
+    totalPayment += b?.payment ?? 0;
   });
-  const totalBalance = totalPrev + totalSales;
+  const totalBalance = totalPrev + totalSales - totalPayment;
 
   // 페이지 chunk
   const pages: DailySummaryRow[][] = [];
@@ -116,14 +120,17 @@ function buildDailySummaryHtml(
       const dataRowsHtml = chunk
         .map((r, local) => {
           const i = startGlobalIdx + local;
-          const prev = balances.get(r.customerName) ?? 0;
-          const total = prev + r.salesAmount;
+          const b = balances.get(r.customerName);
+          const prev = b?.prev ?? 0;
+          const payment = b?.payment ?? 0;
+          const total = prev + r.salesAmount - payment;
           return `
     <tr>
       <td style="text-align:left; padding-left:6px;" contenteditable="true">${r.customerName}</td>
-      <td style="text-align:right; padding-right:6px;" contenteditable="true" data-row="${i}" data-col="prev">${prev > 0 ? formatNumber(prev) : ''}</td>
-      <td style="text-align:right; padding-right:6px;" contenteditable="true" data-row="${i}" data-col="sales">${r.salesAmount > 0 ? formatNumber(r.salesAmount) : ''}</td>
-      <td style="text-align:right; padding-right:6px; font-weight:700; color:#1B365D;" data-row="${i}" data-col="total">${total > 0 ? formatNumber(total) : ''}</td>
+      <td style="text-align:right; padding-right:6px;" contenteditable="true" data-row="${i}" data-col="prev">${prev !== 0 ? formatNumber(prev) : ''}</td>
+      <td style="text-align:right; padding-right:6px;" contenteditable="true" data-row="${i}" data-col="sales">${r.salesAmount !== 0 ? formatNumber(r.salesAmount) : ''}</td>
+      <td style="text-align:right; padding-right:6px; color:#15803d;" contenteditable="true" data-row="${i}" data-col="payment">${payment !== 0 ? formatNumber(payment) : ''}</td>
+      <td style="text-align:right; padding-right:6px; font-weight:700; color:#1B365D;" data-row="${i}" data-col="total">${total !== 0 ? formatNumber(total) : ''}</td>
     </tr>`;
         })
         .join('');
@@ -133,8 +140,9 @@ function buildDailySummaryHtml(
         <tfoot>
           <tr style="background:#f0f0f0; font-weight:800;">
             <td style="text-align:center;">합계</td>
-            <td style="text-align:right; padding-right:6px;" id="ds-total-prev">${totalPrev > 0 ? formatNumber(totalPrev) : ''}</td>
+            <td style="text-align:right; padding-right:6px;" id="ds-total-prev">${totalPrev !== 0 ? formatNumber(totalPrev) : ''}</td>
             <td style="text-align:right; padding-right:6px;" id="ds-total-sales">${formatNumber(totalSales)}</td>
+            <td style="text-align:right; padding-right:6px; color:#15803d;" id="ds-total-payment">${totalPayment !== 0 ? formatNumber(totalPayment) : ''}</td>
             <td style="text-align:right; padding-right:6px; color:#1B365D;" id="ds-total-balance">${formatNumber(totalBalance)}</td>
           </tr>
         </tfoot>`
@@ -156,10 +164,11 @@ function buildDailySummaryHtml(
       <table class="ppm-table">
         <thead>
           <tr>
-            <th style="width:40%;">상호</th>
-            <th style="width:20%;">전잔고</th>
-            <th style="width:20%;">매출금액</th>
-            <th style="width:20%;">총잔액</th>
+            <th style="width:32%;">상호</th>
+            <th style="width:17%;">전잔고</th>
+            <th style="width:17%;">매출금액</th>
+            <th style="width:17%;">입금</th>
+            <th style="width:17%;">총잔액</th>
           </tr>
         </thead>
         <tbody>
@@ -173,7 +182,8 @@ function buildDailySummaryHtml(
 }
 
 /**
- * 총잔액 자동 재계산 (전잔고/매출금액 수정 시)
+ * 총잔액 자동 재계산 — 전잔고/매출금액/입금 셀 수정 시.
+ *   total = prev + sales − payment
  */
 function bindRecalculation(): void {
   const modal = document.getElementById('print-preview-modal');
@@ -182,23 +192,23 @@ function bindRecalculation(): void {
   modal.addEventListener('input', (e) => {
     const target = e.target as HTMLElement;
     const col = target.getAttribute('data-col');
-    if (col !== 'prev' && col !== 'sales') return;
+    if (col !== 'prev' && col !== 'sales' && col !== 'payment') return;
 
     const row = target.getAttribute('data-row');
     if (!row) return;
 
-    // 같은 행의 전잔고, 매출금액 읽기
     const prevCell = modal.querySelector(`[data-row="${row}"][data-col="prev"]`) as HTMLElement;
     const salesCell = modal.querySelector(`[data-row="${row}"][data-col="sales"]`) as HTMLElement;
+    const paymentCell = modal.querySelector(`[data-row="${row}"][data-col="payment"]`) as HTMLElement;
     const totalCell = modal.querySelector(`[data-row="${row}"][data-col="total"]`) as HTMLElement;
 
-    if (!prevCell || !salesCell || !totalCell) return;
+    if (!prevCell || !salesCell || !paymentCell || !totalCell) return;
 
     const prev = parseFormattedNumber(prevCell.textContent || '0');
     const sales = parseFormattedNumber(salesCell.textContent || '0');
-    totalCell.textContent = formatNumber(prev + sales);
+    const payment = parseFormattedNumber(paymentCell.textContent || '0');
+    totalCell.textContent = formatNumber(prev + sales - payment);
 
-    // 합계 행 재계산
     recalcTotals(modal);
   });
 }
@@ -206,21 +216,29 @@ function bindRecalculation(): void {
 function recalcTotals(modal: HTMLElement): void {
   let totalPrev = 0;
   let totalSales = 0;
+  let totalPayment = 0;
   let totalBalance = 0;
 
-  const prevCells = modal.querySelectorAll('[data-col="prev"]');
-  const salesCells = modal.querySelectorAll('[data-col="sales"]');
-  const totalCells = modal.querySelectorAll('[data-col="total"]');
-
-  prevCells.forEach((c) => { totalPrev += parseFormattedNumber(c.textContent || '0'); });
-  salesCells.forEach((c) => { totalSales += parseFormattedNumber(c.textContent || '0'); });
-  totalCells.forEach((c) => { totalBalance += parseFormattedNumber(c.textContent || '0'); });
+  modal.querySelectorAll('[data-col="prev"]').forEach((c) => {
+    totalPrev += parseFormattedNumber(c.textContent || '0');
+  });
+  modal.querySelectorAll('[data-col="sales"]').forEach((c) => {
+    totalSales += parseFormattedNumber(c.textContent || '0');
+  });
+  modal.querySelectorAll('[data-col="payment"]').forEach((c) => {
+    totalPayment += parseFormattedNumber(c.textContent || '0');
+  });
+  modal.querySelectorAll('[data-col="total"]').forEach((c) => {
+    totalBalance += parseFormattedNumber(c.textContent || '0');
+  });
 
   const tp = modal.querySelector('#ds-total-prev');
   const ts = modal.querySelector('#ds-total-sales');
+  const tpay = modal.querySelector('#ds-total-payment');
   const tb = modal.querySelector('#ds-total-balance');
   if (tp) tp.textContent = formatNumber(totalPrev);
   if (ts) ts.textContent = formatNumber(totalSales);
+  if (tpay) tpay.textContent = formatNumber(totalPayment);
   if (tb) tb.textContent = formatNumber(totalBalance);
 }
 

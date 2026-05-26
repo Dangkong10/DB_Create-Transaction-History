@@ -7,6 +7,8 @@ export interface Transaction {
   customerName: string;
   productName: string;
   quantity: number;
+  /** 거래 시점에 저장된 단가. legacy 데이터에선 undefined. */
+  unitPrice?: number;
   date: string; // YYYY-MM-DD
   createdAt: string; // ISO string
 }

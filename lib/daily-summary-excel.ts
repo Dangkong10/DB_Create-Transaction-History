@@ -1,5 +1,8 @@
 /**
- * 당일 집계표 엑셀 생성 로직
+ * 당일 집계표 엑셀 생성 로직.
+ *
+ * 순수 집계 함수 aggregateDailySummary 는 lib/daily-summary-aggregate.ts 로 분리
+ * (Excel/expo/react-native 같은 무거운 의존성과 격리해서 vitest 환경 호환).
  */
 
 import ExcelJS from 'exceljs';
@@ -7,51 +10,10 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import { Platform } from 'react-native';
 import type { Transaction } from './excel-utils';
+import { aggregateDailySummary, type DailySummaryRow } from './daily-summary-aggregate';
 
-/**
- * 당일 집계표 데이터 타입
- */
-export interface DailySummaryRow {
-  customerName: string;
-  prevBalance: number;
-  salesAmount: number;
-  totalBalance: number;
-}
-
-/**
- * 거래 내역을 거래처별로 집계
- */
-export function aggregateDailySummary(
-  transactions: Transaction[],
-  getUnitPrice: (productName: string) => number
-): DailySummaryRow[] {
-  const summaryMap = new Map<string, { salesAmount: number }>();
-
-  // 거래처별 매출금액 집계
-  transactions.forEach((tx) => {
-    const existing = summaryMap.get(tx.customerName) || { salesAmount: 0 };
-    const unitPrice = getUnitPrice(tx.productName);
-    const amount = unitPrice * tx.quantity;
-    existing.salesAmount += amount;
-    summaryMap.set(tx.customerName, existing);
-  });
-
-  // 배열로 변환 (전잔고는 일단 0으로 설정)
-  const rows: DailySummaryRow[] = [];
-  summaryMap.forEach((data, customerName) => {
-    rows.push({
-      customerName,
-      prevBalance: 0, // 전잔고는 추후 수기 입력 또는 DB 연동
-      salesAmount: data.salesAmount,
-      totalBalance: 0 + data.salesAmount, // 전잔고 + 매출금액
-    });
-  });
-
-  // 상호명 가나다순 정렬
-  rows.sort((a, b) => a.customerName.localeCompare(b.customerName, 'ko-KR'));
-
-  return rows;
-}
+export { aggregateDailySummary };
+export type { DailySummaryRow };
 
 /**
  * 당일 집계표 엑셀 파일 생성

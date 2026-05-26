@@ -74,6 +74,22 @@ export async function openReceiptPreview(
 //  HTML 생성
 // =================================================================
 
+/**
+ * 영수증 한 장에 적힐 「전잔고」 값.
+ *
+ *   집계표용 prev (= D 직전 잔고, 당일 입금 차감 안 됨)에서
+ *   당일 입금까지 마저 빼서 "지금 받을 돈" 의미로 되돌린다.
+ *
+ *   prev_for_receipt = SUM(매출<D) − SUM(입금≤D) + SUM(조정≤D)
+ *
+ *   영수증 총액 = prev_for_receipt + 당일 매출
+ *               = 거래처가 이번에 줘야 할 돈
+ */
+function receiptPrev(b: ReceiptBalances | undefined): number {
+  if (!b) return 0;
+  return b.previousBalance - b.dailyPayment;
+}
+
 function buildReceiptHtml(
   normal: ReceiptGroup[],
   oversized: ReceiptGroup[],
@@ -104,7 +120,7 @@ function buildReceiptHtml(
         parts.push('<div class="r-block" style="padding:2mm; border:0.5px solid #ddd; display:flex; flex-direction:column; overflow:hidden;">');
         // maxRows: 6 → 8 (사용자 요구로 품목 행 2개 추가). 행 8개여도
         // 글씨/행높이 기준으로 1/3 페이지 99mm 안에 들어가도록 행 높이 17pt 유지.
-        parts.push(buildSingleReceipt(pageReceipts[slot], products, specialPrices, 8, balancesByCustomer.get(pageReceipts[slot].customerName)?.previousBalance ?? 0));
+        parts.push(buildSingleReceipt(pageReceipts[slot], products, specialPrices, 8, receiptPrev(balancesByCustomer.get(pageReceipts[slot].customerName))));
         parts.push('</div>');
       } else {
         parts.push('<div class="r-block" style="padding:2mm; border:0.5px solid #ddd; display:flex; flex-direction:column;"><div class="empty-slot" style="flex:1;"><div class="empty-slot-inner">빈 슬롯</div></div></div>');
@@ -127,12 +143,12 @@ function buildReceiptHtml(
         if (row.length === 2) {
           parts.push('<div class="over-grid-2" style="margin-bottom:6mm;">');
           row.forEach((r) => {
-            parts.push(`<div>${buildSingleReceipt(r, products, specialPrices, r.items.length, balancesByCustomer.get(r.customerName)?.previousBalance ?? 0)}</div>`);
+            parts.push(`<div>${buildSingleReceipt(r, products, specialPrices, r.items.length, receiptPrev(balancesByCustomer.get(r.customerName)))}</div>`);
           });
           parts.push('</div>');
         } else {
           parts.push('<div class="over-grid-1" style="margin-bottom:6mm;">');
-          parts.push(`<div>${buildSingleReceipt(row[0], products, specialPrices, row[0].items.length, balancesByCustomer.get(row[0].customerName)?.previousBalance ?? 0)}</div>`);
+          parts.push(`<div>${buildSingleReceipt(row[0], products, specialPrices, row[0].items.length, receiptPrev(balancesByCustomer.get(row[0].customerName)))}</div>`);
           parts.push('</div>');
         }
       });

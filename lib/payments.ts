@@ -6,7 +6,10 @@
  * 계산 원칙:
  *   - 현재미수금은 어디에도 저장하지 않음.
  *   - 매번 SUM(transactions) - SUM(payments) + SUM(adjustments) 로 자동 계산.
- *   - "전잔고" = D 영업 시작 전 미수금 (매출 < D, 입금 ≤ D, 조정 ≤ D)
+ *   - "전잔고" = D **직전** 미수금 (매출 < D, 입금 < D, 조정 ≤ D)
+ *   - 당일 매출/입금은 별도 컬럼으로 분리:
+ *       총잔액 = 전잔고 + 당일매출 - 당일입금
+ *   - 조정은 즉시 누적되어 전잔고에 흡수 (조정 ≤ D 포함).
  *
  * adjustments.amount 부호:
  *   + 양수: 미수금 증가 방향
@@ -30,11 +33,13 @@ export interface Payment {
  */
 export interface ReceiptBalances {
   customerName: string;
-  /** 전잔고 — D 영업 시작 전 미수금 */
+  /** 전잔고 — D 직전 미수금 (매출 < D, 입금 < D, 조정 ≤ D) */
   previousBalance: number;
   /** 당일매출 — date=D 의 매출 합 */
   dailyRevenue: number;
-  /** 총잔액 — previousBalance + dailyRevenue */
+  /** 당일입금 — payment_date=D 의 입금 합 */
+  dailyPayment: number;
+  /** 총잔액 = previousBalance + dailyRevenue − dailyPayment */
   total: number;
 }
 
@@ -183,13 +188,14 @@ export async function getCurrentOutstanding(customerName: string): Promise<numbe
 /**
  * 날짜 D 의 영수증·집계표 출력에 필요한 모든 거래처별 잔고 정보.
  *
- *   전잔고(X, D) = SUM(매출, 매출일 < D)  -  SUM(입금, 입금일 ≤ D)
+ *   전잔고(X, D)   = SUM(매출, 매출일 < D)  -  SUM(입금, 입금일 < D)  +  SUM(조정, 조정일 ≤ D)
  *   당일매출(X, D) = SUM(매출, 매출일 = D)
- *   총잔액 = 전잔고 + 당일매출
+ *   당일입금(X, D) = SUM(입금, 입금일 = D)
+ *   총잔액         = 전잔고 + 당일매출 − 당일입금
+ *
+ *   ⇒ 결과적으로 어제(D-1) 총잔액 == 오늘(D) 전잔고 (backdate 없을 때)
  *
  * @returns 모든 거래처 결과 Map. 호출자가 출력 정책에 따라 필터링.
- *   - 영수증 출력: 당일매출>0 인 것만 (전잔고만 있는 것은 출력 X)
- *   - 집계표:     당일매출>0 인 것만
  */
 export async function getReceiptBalancesForDate(
   date: string,
@@ -243,17 +249,24 @@ export async function getReceiptBalancesForDate(
     console.warn('[getReceiptBalancesForDate] adjustments fetch 실패 (0으로 처리):', err.message ?? err);
   }
 
-  // 거래처별로 prev/daily 누적
+  // 거래처별로 prev / daily 누적
   const result = new Map<string, ReceiptBalances>();
   const getOrInit = (name: string): ReceiptBalances => {
     let r = result.get(name);
     if (!r) {
-      r = { customerName: name, previousBalance: 0, dailyRevenue: 0, total: 0 };
+      r = {
+        customerName: name,
+        previousBalance: 0,
+        dailyRevenue: 0,
+        dailyPayment: 0,
+        total: 0,
+      };
       result.set(name, r);
     }
     return r;
   };
 
+  // 매출: < D 는 prev, = D 는 dailyRevenue
   for (const r of txRows ?? []) {
     const amount = (r.quantity ?? 0) * (r.unit_price ?? 0);
     const entry = getOrInit(r.customer_name);
@@ -264,20 +277,26 @@ export async function getReceiptBalancesForDate(
     }
   }
 
+  // 입금: < D 는 prev 에서 차감, = D 는 dailyPayment 별도 누적
   for (const r of payRows ?? []) {
     const entry = getOrInit(r.customer_name);
-    entry.previousBalance -= r.amount ?? 0;
+    const amt = r.amount ?? 0;
+    if (r.payment_date < date) {
+      entry.previousBalance -= amt;
+    } else if (r.payment_date === date) {
+      entry.dailyPayment += amt;
+    }
   }
 
-  // 조정은 전잔고에 가산 (양수=미수↑, 음수=미수↓)
+  // 조정: ≤ D 전부 prev 에 흡수 (당일 조정 포함, 즉시 누적)
   for (const r of adjRows) {
     const entry = getOrInit(r.customer_name);
     entry.previousBalance += r.amount ?? 0;
   }
 
-  // total 계산
+  // 총잔액 = 전잔고 + 당일매출 − 당일입금
   for (const entry of result.values()) {
-    entry.total = entry.previousBalance + entry.dailyRevenue;
+    entry.total = entry.previousBalance + entry.dailyRevenue - entry.dailyPayment;
   }
 
   return result;
@@ -296,6 +315,7 @@ export async function getReceiptBalancesForCustomer(
       customerName,
       previousBalance: 0,
       dailyRevenue: 0,
+      dailyPayment: 0,
       total: 0,
     }
   );
@@ -471,40 +491,41 @@ function validatePaymentInput(item: PaymentInput): void {
 }
 
 /**
- * 여러 거래처의 입금을 한 번에 저장 (일괄 INSERT).
+ * 여러 거래처의 입금을 한 번에 저장 — **누적 upsert**.
  *
- * 트랜잭션 보장: Supabase는 단일 .insert([...])를 atomic batch로 처리.
- * 하나라도 RLS·constraint 위반이면 전체 롤백.
+ * 같은 (user_id, customer_name, payment_date) 행이 이미 있으면
+ *   amount := amount + 새 amount (합산)
+ * 없으면 INSERT.
  *
- * @returns 저장된 Payment 행들 (DB에서 부여받은 id 포함)
+ * 전제: supabase-migration-2026-05-payments-upsert.sql 이 적용되어 있어
+ *       (1) UNIQUE 제약, (2) add_payments RPC 가 존재해야 한다.
+ *
+ * @returns 저장/갱신된 Payment 행들 (합산 후 amount 포함)
  */
 export async function savePayments(items: PaymentInput[]): Promise<Payment[]> {
   if (items.length === 0) return [];
 
-  // 사전 검증 (저장 시도 전에 모두 통과해야 INSERT)
   items.forEach(validatePaymentInput);
 
-  const userId = await getUserIdOrThrow();
+  // user_id 는 RPC 내부에서 auth.uid() 로 강제됨 → 페이로드에 보낼 필요 없음.
+  await getUserIdOrThrow(); // 로그인 여부만 미리 체크
 
-  const rows = items.map((it) => ({
-    user_id: userId,
+  const payload = items.map((it) => ({
     customer_name: it.customerName,
     payment_date: it.paymentDate,
     amount: it.amount,
   }));
 
-  const { data, error } = await supabase
-    .from('payments')
-    .insert(rows)
-    .select();
+  const { data, error } = await supabase.rpc('add_payments', { p_items: payload });
 
   if (error) {
     console.error('[savePayments] Error:', error);
     throw new Error(`입금 저장 실패: ${error.message}`);
   }
 
-  console.log('[savePayments] Saved:', data?.length ?? 0, '건');
-  return (data ?? []).map(rowToPayment);
+  const rows = (data ?? []) as any[];
+  console.log('[savePayments] Upserted (additive):', rows.length, '건');
+  return rows.map(rowToPayment);
 }
 
 // ==================== 미수금 조정 ====================
