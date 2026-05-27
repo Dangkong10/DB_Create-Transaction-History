@@ -491,16 +491,16 @@ function validatePaymentInput(item: PaymentInput): void {
 }
 
 /**
- * 여러 거래처의 입금을 한 번에 저장 — **누적 upsert**.
+ * 여러 거래처의 입금을 한 번에 저장 — **행 단위 INSERT** (배치).
  *
- * 같은 (user_id, customer_name, payment_date) 행이 이미 있으면
- *   amount := amount + 새 amount (합산)
- * 없으면 INSERT.
+ * 같은 거래처×같은 날짜에 두 번 입력하면 두 행으로 보존된다.
+ * (보관함은 입력 단위 그대로 표시, 합산은 잔고 계산/집계표 쿼리에서 SUM 으로 처리.)
  *
- * 전제: supabase-migration-2026-05-payments-upsert.sql 이 적용되어 있어
- *       (1) UNIQUE 제약, (2) add_payments RPC 가 존재해야 한다.
+ * 전제: supabase/migrations/supabase-migration-2026-05-payments-no-merge.sql 이 적용되어 있어
+ *       add_payments RPC 가 ON CONFLICT 없이 순수 INSERT 만 수행해야 한다.
+ *       (이전 payments-upsert 마이그레이션의 UNIQUE 제약은 해제됨.)
  *
- * @returns 저장/갱신된 Payment 행들 (합산 후 amount 포함)
+ * @returns 저장된 Payment 행들
  */
 export async function savePayments(items: PaymentInput[]): Promise<Payment[]> {
   if (items.length === 0) return [];
@@ -524,7 +524,7 @@ export async function savePayments(items: PaymentInput[]): Promise<Payment[]> {
   }
 
   const rows = (data ?? []) as any[];
-  console.log('[savePayments] Upserted (additive):', rows.length, '건');
+  console.log('[savePayments] Inserted:', rows.length, '건');
   return rows.map(rowToPayment);
 }
 
