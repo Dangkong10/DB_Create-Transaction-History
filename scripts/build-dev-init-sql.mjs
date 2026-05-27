@@ -23,6 +23,7 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "..");
+const migrationsDir = path.join(projectRoot, "supabase", "migrations");
 
 const files = [
   "supabase-schema.sql",
@@ -51,7 +52,7 @@ const parts = [
 ];
 
 for (const file of files) {
-  const fullPath = path.join(projectRoot, file);
+  const fullPath = path.join(migrationsDir, file);
   if (!fs.existsSync(fullPath)) {
     console.error(`[build-dev-init-sql] MISSING: ${file}`);
     process.exit(1);

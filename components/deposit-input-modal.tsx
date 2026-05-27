@@ -1,7 +1,7 @@
 /**
  * 입금 입력 모달 — 미수금 누적 시스템
  *
- * 명세서: design_미수금시스템.html §5
+ * 명세서: docs/design_미수금시스템.html §5
  *
  * 흐름:
  *   1. 모달 열림 → getPendingCustomers()로 미수 거래처 로드
