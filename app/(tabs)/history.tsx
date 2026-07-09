@@ -414,34 +414,7 @@ export default function HistoryScreen() {
           contentContainerStyle={{ padding: 20, paddingBottom: 100 }}
           style={Platform.OS === 'web' ? ({ flex: 1, minHeight: 0, maxHeight: '100%' } as any) : { flex: 1 }}
         >
-          {/* 로그인 정보 헤더 — mount 전엔 빈 공간으로 hydration mismatch 방지 */}
-          <View style={{ flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', marginBottom: 12, gap: 12, minHeight: 20 }}>
-            {mounted && (user ? (
-              <>
-                <Text style={{ fontSize: 14, color: '#666666' }}>{user.email}</Text>
-                <TouchableOpacity
-                  onPress={() => {
-                    showConfirm({
-                      title: "로그아웃",
-                      message: "로그아웃 하시겠습니까?",
-                      onConfirm: async () => {
-                        await logout();
-                        showToast("로그아웃되었습니다.", "success");
-                      },
-                    });
-                  }}
-                >
-                  <Text style={{ fontSize: 14, color: '#e74c3c', fontWeight: '600' }}>로그아웃</Text>
-                </TouchableOpacity>
-              </>
-            ) : (
-              <TouchableOpacity onPress={handleLogin}>
-                <Text style={{ fontSize: 14, color: '#1B365D', fontWeight: '600' }}>로그인</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-
-          {/* 헤더 */}
+          {/* 헤더 (로그인 정보는 공용 AppHeader 로 이동) */}
           <Text style={{ fontSize: 22, fontWeight: '800', color: '#1B365D', letterSpacing: -0.5, marginBottom: 8 }}>
             거래 내역
           </Text>

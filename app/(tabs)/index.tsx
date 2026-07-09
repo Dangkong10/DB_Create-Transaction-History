@@ -421,41 +421,8 @@ export default function HomeScreen() {
             overflow: 'hidden' as any
           } as any : { flex: 1 }}
         >
-          {/* 헤더 영역 */}
+          {/* 헤더 영역 — 로그인 정보는 공용 AppHeader 로 이동 */}
           <View className="px-5 pt-5 pb-3">
-            {/* 로그인 정보 (우측 상단) - mount 전엔 빈 공간으로 hydration mismatch 방지 */}
-            <View className="flex-row justify-end items-center mb-3 gap-3" style={{ minHeight: 20 }}>
-              {mounted && (user ? (
-                <>
-                  <Text className="text-sm text-muted">{user.email}</Text>
-                  <TouchableOpacity
-                    onPress={() => {
-                      showConfirm({
-                        title: "로그아웃",
-                        message: "로그아웃 하시겠습니까? 로그아웃 후에도 로컬 데이터는 유지됩니다.",
-                        onConfirm: async () => {
-                          await logout();
-                          showToast("로그아웃되었습니다.", "success");
-                        },
-                      });
-                    }}
-                  >
-                    <Text className="text-sm text-error font-semibold">
-                      로그아웃
-                    </Text>
-                  </TouchableOpacity>
-                </>
-              ) : (
-                <TouchableOpacity
-                  onPress={handleLogin}
-                >
-                  <Text className="text-sm text-primary font-semibold">
-                    로그인
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-            
             <View className="items-center gap-2">
               <Text className="text-3xl font-bold text-foreground">
                 거래내역 입력

@@ -28,3 +28,4 @@ tests/qa-screenshots/
 expo-env.d.ts
 # @end expo-cli.env
 dist-debug
+.env*
