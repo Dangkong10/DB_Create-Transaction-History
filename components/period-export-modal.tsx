@@ -23,60 +23,9 @@ import {
 import { useToast } from '@/lib/toast-provider';
 import { getLocalTransactions, pullFromServer } from '@/lib/sync-manager';
 import { exportTransactionsToExcel, generateFileName } from '@/lib/export-transactions-excel';
+import { matchChosung } from '@/lib/hangul-utils';
+import { getQuickRange, type QuickRangeKey } from '@/lib/date-range-utils';
 import type { Transaction } from '@/lib/supabase';
-
-const toLocalDateStr = (d: Date) =>
-  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-
-type QuickRangeKey = 'thisWeek' | 'lastWeek' | 'thisMonth' | 'lastMonth' | 'thisYear';
-
-function getQuickRange(key: QuickRangeKey): { start: string; end: string } {
-  const now = new Date();
-  now.setHours(0, 0, 0, 0);
-  const y = now.getFullYear();
-  const m = now.getMonth();
-  const d = now.getDate();
-  const dow = now.getDay();
-
-  let start: Date;
-  let end: Date;
-
-  switch (key) {
-    case 'thisWeek': {
-      const mon = new Date(now);
-      mon.setDate(d - (dow === 0 ? 6 : dow - 1));
-      start = mon;
-      end = new Date(mon);
-      end.setDate(mon.getDate() + 6);
-      break;
-    }
-    case 'lastWeek': {
-      const thisMon = new Date(now);
-      thisMon.setDate(d - (dow === 0 ? 6 : dow - 1));
-      end = new Date(thisMon);
-      end.setDate(thisMon.getDate() - 1);
-      start = new Date(end);
-      start.setDate(end.getDate() - 6);
-      break;
-    }
-    case 'thisMonth':
-      start = new Date(y, m, 1);
-      end = new Date(y, m + 1, 0);
-      break;
-    case 'lastMonth':
-      start = new Date(y, m - 1, 1);
-      end = new Date(y, m, 0);
-      break;
-    case 'thisYear':
-      start = new Date(y, 0, 1);
-      end = new Date(y, 11, 31);
-      break;
-    default:
-      start = now;
-      end = now;
-  }
-  return { start: toLocalDateStr(start), end: toLocalDateStr(end) };
-}
 
 interface Props {
   visible: boolean;
@@ -93,6 +42,7 @@ export function PeriodExportModal({ visible, onClose }: Props) {
   const [exporting, setExporting] = useState(false);
   const [allTransactions, setAllTransactions] = useState<Transaction[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [customerQuery, setCustomerQuery] = useState('');
 
   // 모달 오픈 시 기본값 = 이번 달 + 데이터 로드
   useEffect(() => {
@@ -102,6 +52,7 @@ export function PeriodExportModal({ visible, onClose }: Props) {
     setEndDate(end);
     setActiveQuick('thisMonth');
     setSelected(new Set());
+    setCustomerQuery('');
     loadData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
@@ -173,6 +124,13 @@ export function PeriodExportModal({ visible, onClose }: Props) {
     }
     return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name, 'ko-KR'));
   }, [inRange]);
+
+  // 검색 필터링된 거래처 목록 (이름 부분 일치 + 초성 검색)
+  const filteredCustomerStats = useMemo(() => {
+    const q = customerQuery.trim();
+    if (!q) return customerStats;
+    return customerStats.filter((c) => matchChosung(c.name, q));
+  }, [customerStats, customerQuery]);
 
   // 전체 집계
   const summary = useMemo(() => {
@@ -427,6 +385,36 @@ export function PeriodExportModal({ visible, onClose }: Props) {
               </View>
             </View>
 
+            {/* 거래처 검색창 (초성 검색 지원) */}
+            <View style={{ position: 'relative', marginBottom: 8 }}>
+              <TextInput
+                value={customerQuery}
+                onChangeText={setCustomerQuery}
+                placeholder="거래처 이름 또는 초성 입력 (예: ㅎㅂ)"
+                placeholderTextColor="#999"
+                style={{
+                  height: 40, paddingLeft: 12, paddingRight: 40, borderRadius: 8,
+                  borderWidth: 1, borderColor: '#e0e0e0', backgroundColor: '#f5f5f5',
+                  fontSize: 14, color: '#1B365D',
+                }}
+              />
+              {customerQuery.length > 0 && (
+                <TouchableOpacity
+                  onPress={() => setCustomerQuery('')}
+                  activeOpacity={0.6}
+                  style={{
+                    position: 'absolute', right: 8, top: '50%',
+                    transform: [{ translateY: -12 }],
+                    width: 24, height: 24,
+                    alignItems: 'center', justifyContent: 'center',
+                  }}
+                  accessibilityLabel="검색어 지우기"
+                >
+                  <Text style={{ fontSize: 16, color: '#999999' }}>✕</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
             <View style={{
               borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 8,
               maxHeight: 240, marginBottom: 12, overflow: 'hidden',
@@ -436,8 +424,14 @@ export function PeriodExportModal({ visible, onClose }: Props) {
                   <View style={{ padding: 24, alignItems: 'center' }}>
                     <Text style={{ fontSize: 13, color: '#999' }}>거래 내역 없음</Text>
                   </View>
+                ) : filteredCustomerStats.length === 0 ? (
+                  <View style={{ padding: 24, alignItems: 'center' }}>
+                    <Text style={{ fontSize: 13, color: '#999' }}>
+                      "{customerQuery.trim()}" 검색 결과 없음
+                    </Text>
+                  </View>
                 ) : (
-                  customerStats.map((c, idx) => {
+                  filteredCustomerStats.map((c, idx) => {
                     const checked = selected.has(c.name);
                     return (
                       <TouchableOpacity

@@ -26,6 +26,7 @@ import { useIsMounted } from "@/hooks/use-is-mounted";
 import { useSync } from "@/hooks/use-sync";
 import { SyncStatusBadge } from "@/components/sync-status-badge";
 import { filterByChosung } from "@/lib/chosung-utils";
+import { getQuickRange, toLocalDateStr, formatDateHeader, DATE_RE, type QuickRangeKey } from "@/lib/date-range-utils";
 import { MonthlyCalendar } from "@/components/monthly-calendar";
 import { PeriodExportModal } from "@/components/period-export-modal";
 
@@ -58,6 +59,11 @@ export default function HistoryScreen() {
   }, [selectedDate]);
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [calendarOpen, setCalendarOpen] = useState(false);
+  // 당일/기간 보기 모드 — 초기 'day'라 SSR 첫 렌더는 기존과 동일 (hydration 안전)
+  const [viewMode, setViewMode] = useState<'day' | 'range'>('day');
+  const [rangeStart, setRangeStart] = useState<string>('');
+  const [rangeEnd, setRangeEnd] = useState<string>('');
+  const [activeQuick, setActiveQuick] = useState<QuickRangeKey | null>(null);
   const calendarWrapperRef = useRef<View>(null);
   const scrollViewRef = useRef<ScrollView>(null);
   const [showScrollTop, setShowScrollTop] = useState(false);
@@ -97,7 +103,12 @@ export default function HistoryScreen() {
 
   const renderFromLocal = async () => {
     const localAll = await getLocalTransactions();
-    const localFiltered = localAll.filter((t) => t.date.startsWith(selectedDate));
+    const localFiltered = viewMode === 'range'
+      ? localAll.filter((t) => {
+          const d = (t.date || '').slice(0, 10);
+          return d >= rangeStart && d <= rangeEnd;
+        })
+      : localAll.filter((t) => t.date.startsWith(selectedDate));
 
     const seen = new Set<string>();
     const mapped: Transaction[] = [];
@@ -143,10 +154,18 @@ export default function HistoryScreen() {
     }
   };
 
+  // 유효한 기준(당일: 날짜 세팅됨 / 기간: 완성된 시작·종료일)이 있을 때만 로드
+  // — DATE_RE 가드로 수동 입력 타이핑 중간값("2026-0")에 서버 풀이 돌지 않게 함
+  const rangeValid = DATE_RE.test(rangeStart) && DATE_RE.test(rangeEnd) && rangeStart <= rangeEnd;
   useEffect(() => {
-    if (!selectedDate) return;
+    if (viewMode === 'day') {
+      if (!selectedDate) return;
+    } else {
+      if (!rangeValid) return;
+    }
     loadTransactions();
-  }, [selectedDate]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedDate, viewMode, rangeStart, rangeEnd]);
 
   // 달력 팝업: 바깥 클릭 / ESC 로 닫기 (web 전용)
   useEffect(() => {
@@ -172,6 +191,7 @@ export default function HistoryScreen() {
   }, [calendarOpen]);
 
   // 다른 페이지에서 저장/수정/삭제 시 즉시 반영
+  // deps에 모드/기간 포함 — 핸들러 클로저가 항상 현재 보기 기준으로 재로드하도록
   useEffect(() => {
     if (!selectedDate) return;
     const handleChanged = () => loadTransactions();
@@ -183,7 +203,8 @@ export default function HistoryScreen() {
       window.removeEventListener('transaction:changed', handleChanged);
       window.removeEventListener('focus', handleFocus);
     };
-  }, [selectedDate]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedDate, viewMode, rangeStart, rangeEnd]);
 
   const handleDeleteTransaction = async (id: string) => {
     try {
@@ -278,34 +299,6 @@ export default function HistoryScreen() {
     }
   };
 
-  const formatDate = (dateString: string) => {
-    try {
-      if (!dateString || typeof dateString !== 'string' || dateString.trim() === '') {
-        return '-';
-      }
-      // "2026-04-17 14:30:00" 형식 직접 파싱
-      if (dateString.includes(' ')) {
-        const [datePart, timePart] = dateString.split(' ');
-        const [, mm, dd] = datePart.split('-');
-        const [h, m] = (timePart || '').split(':');
-        return `${mm}. ${dd}. ${h}:${m}`;
-      }
-      // ISO 형식 등
-      const date = new Date(dateString);
-      if (isNaN(date.getTime())) return dateString;
-      const mm = String(date.getMonth() + 1).padStart(2, '0');
-      const dd = String(date.getDate()).padStart(2, '0');
-      const h = String(date.getHours()).padStart(2, '0');
-      const m = String(date.getMinutes()).padStart(2, '0');
-      return `${mm}. ${dd}. ${h}:${m}`;
-    } catch (error) {
-      return dateString;
-    }
-  };
-
-  const toLocalDateStr = (d: Date) =>
-    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-
   const goToPreviousDay = () => {
     const [y, m, d] = selectedDate.split('-').map(Number);
     const date = new Date(y, m - 1, d - 1);
@@ -322,91 +315,29 @@ export default function HistoryScreen() {
     setSelectedDate(toLocalDateStr(new Date()));
   };
 
-  const handleExportExcel = async () => {
-    try {
-      if (Platform.OS !== "web") {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      }
-      const dataToExport = filteredTransactions;
-      if (dataToExport.length === 0) {
-        showToast("내보낼 데이터가 없습니다.", "error");
-        return;
-      }
-      const ExcelJSModule: any = await import("exceljs");
-      const ExcelJS = ExcelJSModule.default ?? ExcelJSModule;
-      const workbook = new ExcelJS.Workbook();
-      const worksheet = workbook.addWorksheet("거래 내역");
-      worksheet.columns = [
-        { header: "날짜", key: "date", width: 15 },
-        { header: "시간", key: "time", width: 12 },
-        { header: "거래처", key: "customerName", width: 20 },
-        { header: "품목", key: "productName", width: 25 },
-        { header: "수량", key: "quantity", width: 10 },
-      ];
-      dataToExport.forEach((transaction) => {
-        const formattedDateTime = formatDate(transaction.createdAt);
-        let dateStr = transaction.date;
-        let timeStr = "";
-        try {
-          if (formattedDateTime.includes('.')) {
-            const parts = formattedDateTime.split(' ');
-            if (parts.length >= 3) {
-              dateStr = `${parts[0]} ${parts[1]}`;
-              timeStr = parts[2];
-            }
-          } else {
-            timeStr = formattedDateTime;
-          }
-        } catch (error) {
-          timeStr = transaction.createdAt;
-        }
-        worksheet.addRow({
-          date: dateStr,
-          time: timeStr,
-          customerName: transaction.customerName,
-          productName: transaction.productName,
-          quantity: transaction.quantity,
-        });
-      });
-      worksheet.getRow(1).font = { bold: true };
-      worksheet.getRow(1).alignment = { horizontal: "center", vertical: "middle" };
-      const buffer = await workbook.xlsx.writeBuffer();
-      const d = new Date();
-      const today = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
-      const filename = `거래내역_${selectedDate}_${today}.xlsx`;
-      if (Platform.OS === "web") {
-        const blob = new Blob([buffer], {
-          type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = filename;
-        a.click();
-        URL.revokeObjectURL(url);
-      } else {
-        const FileSystem = await import("expo-file-system/legacy");
-        const Sharing = await import("expo-sharing");
-        const base64 = Buffer.from(buffer).toString("base64");
-        const fileUri = `${FileSystem.documentDirectory}${filename}`;
-        await FileSystem.writeAsStringAsync(fileUri, base64, {
-          encoding: "base64" as any,
-        });
-        if (await Sharing.isAvailableAsync()) {
-          await Sharing.shareAsync(fileUri);
-        } else {
-          alert("파일이 저장되었습니다: " + fileUri);
-        }
-      }
-      if (Platform.OS !== "web") {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      }
-      showToast(`엑셀 파일이 생성되었습니다. (${dataToExport.length}건)`, "success");
-    } catch (error) {
-      showToast("엑셀 파일 생성에 실패했습니다.", "error");
-      console.error("엑셀 내보내기 오류:", error);
+  // 당일/기간 모드 전환 — 기간 모드 최초 진입 시 이번 달 기본값, 재진입 시 이전 범위 유지
+  const switchMode = (mode: 'day' | 'range') => {
+    if (mode === 'range' && !rangeStart) {
+      const { start, end } = getQuickRange('thisMonth');
+      setRangeStart(start);
+      setRangeEnd(end);
+      setActiveQuick('thisMonth');
+    }
+    setViewMode(mode);
+    if (Platform.OS !== 'web') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }
   };
+
+  const applyQuick = (key: QuickRangeKey) => {
+    const { start, end } = getQuickRange(key);
+    setRangeStart(start);
+    setRangeEnd(end);
+    setActiveQuick(key);
+  };
+
+  const dateError =
+    viewMode === 'range' && DATE_RE.test(rangeStart) && DATE_RE.test(rangeEnd) && rangeStart > rangeEnd;
 
   // 검색 필터링
   const filteredTransactions = filterByChosung(
@@ -415,8 +346,17 @@ export default function HistoryScreen() {
     (t) => t.customerName
   );
 
-  // 정렬
+  // 정렬 — 기간 모드는 거래일(t.date) 1차 정렬로 날짜 헤더가 날짜당 1회만 나오게 보장
+  // (소급 입력 거래는 createdAt 날짜 ≠ date 일 수 있음). 당일 모드는 기존 로직 그대로.
   const sortedTransactions = [...filteredTransactions].sort((a, b) => {
+    if (viewMode === 'range') {
+      const dA = (a.date || '').slice(0, 10);
+      const dB = (b.date || '').slice(0, 10);
+      if (dA !== dB) return sortOrder === 'newest' ? dB.localeCompare(dA) : dA.localeCompare(dB);
+      return sortOrder === 'newest'
+        ? (b.createdAt || '').localeCompare(a.createdAt || '')
+        : (a.createdAt || '').localeCompare(b.createdAt || '');
+    }
     const dateA = new Date(a.createdAt.split(' ')[0]).getTime();
     const dateB = new Date(b.createdAt.split(' ')[0]).getTime();
     return sortOrder === 'newest' ? dateB - dateA : dateA - dateB;
@@ -516,7 +456,35 @@ export default function HistoryScreen() {
             )}
           </View>
 
-          {/* 날짜 네비게이션 */}
+          {/* 당일/기간 모드 토글 */}
+          <View style={{
+            flexDirection: 'row', backgroundColor: '#ffffff', borderRadius: 12,
+            padding: 4, gap: 4, marginBottom: 12, ...SHADOW,
+          }}>
+            {([
+              { key: 'day', label: '📅 당일' },
+              { key: 'range', label: '📆 기간' },
+            ] as { key: 'day' | 'range'; label: string }[]).map((tab) => {
+              const active = viewMode === tab.key;
+              return (
+                <TouchableOpacity
+                  key={tab.key}
+                  onPress={() => switchMode(tab.key)}
+                  style={{
+                    flex: 1, paddingVertical: 10, borderRadius: 9, alignItems: 'center',
+                    backgroundColor: active ? '#1B365D' : 'transparent',
+                  }}
+                >
+                  <Text style={{ fontSize: 14, fontWeight: '600', color: active ? '#ffffff' : '#666666' }}>
+                    {tab.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          {/* 날짜 네비게이션 (당일 모드) */}
+          {viewMode === 'day' && (
           <View style={{
             flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
             backgroundColor: '#ffffff', borderRadius: 12, padding: 10, paddingHorizontal: 4,
@@ -542,11 +510,81 @@ export default function HistoryScreen() {
               <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>다음 ▶</Text>
             </TouchableOpacity>
           </View>
+          )}
 
-          {/* 액션 바 — 3 버튼 (달력 / 당일 내보내기 / 기간 집계) */}
-          <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
-            {/* 달력 + 팝업 (relative wrapper) */}
-            <View ref={calendarWrapperRef} style={{ flex: 1, position: 'relative' }}>
+          {/* 기간 설정 (기간 모드) */}
+          {viewMode === 'range' && (
+          <View style={{
+            backgroundColor: '#ffffff', borderRadius: 12, padding: 14, ...SHADOW,
+          }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <Text style={{ fontSize: 13, color: '#666666', width: 50 }}>시작일</Text>
+              <TextInput
+                value={rangeStart}
+                onChangeText={(v) => { setRangeStart(v); setActiveQuick(null); }}
+                placeholder="YYYY-MM-DD"
+                placeholderTextColor="#999999"
+                style={{
+                  flex: 1, height: 40, paddingHorizontal: 12, borderRadius: 8,
+                  borderWidth: 1, borderColor: '#e0e0e0', fontSize: 14, color: '#1B365D',
+                }}
+              />
+            </View>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Text style={{ fontSize: 13, color: '#666666', width: 50 }}>종료일</Text>
+              <TextInput
+                value={rangeEnd}
+                onChangeText={(v) => { setRangeEnd(v); setActiveQuick(null); }}
+                placeholder="YYYY-MM-DD"
+                placeholderTextColor="#999999"
+                style={{
+                  flex: 1, height: 40, paddingHorizontal: 12, borderRadius: 8,
+                  borderWidth: dateError ? 2 : 1,
+                  borderColor: dateError ? '#e74c3c' : '#e0e0e0',
+                  fontSize: 14, color: '#1B365D',
+                }}
+              />
+            </View>
+            {dateError && (
+              <Text style={{ fontSize: 12, color: '#e74c3c', marginTop: 6 }}>
+                종료일이 시작일보다 앞에 있습니다
+              </Text>
+            )}
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
+              {([
+                { key: 'thisWeek', label: '이번 주' },
+                { key: 'lastWeek', label: '지난 주' },
+                { key: 'thisMonth', label: '이번 달' },
+                { key: 'lastMonth', label: '지난 달' },
+                { key: 'thisYear', label: '올해' },
+              ] as { key: QuickRangeKey; label: string }[]).map((chip) => {
+                const active = activeQuick === chip.key;
+                return (
+                  <TouchableOpacity
+                    key={chip.key}
+                    onPress={() => applyQuick(chip.key)}
+                    style={{
+                      paddingVertical: 6, paddingHorizontal: 14, borderRadius: 16,
+                      backgroundColor: active ? '#1B365D' : '#EDF1F7',
+                    }}
+                  >
+                    <Text style={{
+                      fontSize: 12, fontWeight: '500',
+                      color: active ? '#ffffff' : '#1B365D',
+                    }}>{chip.label}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+          )}
+
+          {/* 액션 바 — 달력(당일 모드만) / 기간 집계
+              zIndex: 달력 팝업이 아래 형제 요소(통계 카드·목록)에 가려지지 않도록 */}
+          <View style={{ flexDirection: 'row', gap: 10, marginTop: 12, zIndex: 100 }}>
+            {/* 달력 + 팝업 (relative wrapper) — 단일 날짜 선택이라 당일 모드 전용 */}
+            {viewMode === 'day' && (
+            <View ref={calendarWrapperRef} style={{ flex: 1, position: 'relative', zIndex: 100 }}>
               <TouchableOpacity
                 onPress={() => setCalendarOpen((prev) => !prev)}
                 style={{
@@ -593,20 +631,8 @@ export default function HistoryScreen() {
                 </View>
               )}
             </View>
+            )}
 
-            <TouchableOpacity
-              onPress={handleExportExcel}
-              disabled={transactions.length === 0}
-              style={{
-                flex: 1, padding: 10, borderRadius: 10, backgroundColor: '#ffffff',
-                borderWidth: 1, borderColor: '#e0e0e0',
-                opacity: transactions.length === 0 ? 0.5 : 1,
-              }}
-            >
-              <Text style={{ textAlign: 'center', fontSize: 14, fontWeight: '600', color: '#1B365D' }}>
-                📥 당일 내보내기
-              </Text>
-            </TouchableOpacity>
             <TouchableOpacity
               onPress={() => setPeriodModalOpen(true)}
               style={{
@@ -625,7 +651,9 @@ export default function HistoryScreen() {
               backgroundColor: '#ffffff', borderRadius: 10, paddingHorizontal: 16, paddingVertical: 10,
               ...SHADOW, flex: 0.3,
             }}>
-              <Text style={{ fontSize: 13, color: '#1B365D' }}>오늘의 총 거래 건수</Text>
+              <Text style={{ fontSize: 13, color: '#1B365D' }}>
+                {viewMode === 'day' ? '오늘의 총 거래 건수' : '기간 내 총 거래 건수'}
+              </Text>
               <Text style={{ fontSize: 18, fontWeight: '700', color: '#1B365D' }}>{totalTransactions}건</Text>
             </View>
             <TextInput
@@ -682,11 +710,31 @@ export default function HistoryScreen() {
               {/* 테이블 바디 */}
               {sortedTransactions.length === 0 ? (
                 <View style={{ padding: 40, alignItems: 'center' }}>
-                  <Text style={{ fontSize: 16, color: '#666666' }}>선택한 날짜에 거래 내역이 없습니다.</Text>
+                  <Text style={{ fontSize: 16, color: '#666666' }}>
+                    {viewMode === 'day' ? '선택한 날짜에 거래 내역이 없습니다.' : '선택한 기간에 거래 내역이 없습니다.'}
+                  </Text>
                 </View>
               ) : (
-                transactionGroups.map((group, groupIdx) => (
-                  group.items.map((item, itemIdx) => {
+                transactionGroups.map((group, groupIdx) => {
+                  // 기간 모드: 날짜가 바뀌는 그룹 앞에 날짜 구분선 삽입
+                  const groupDate = (group.items[0].date || '').slice(0, 10);
+                  const prevDate = groupIdx > 0
+                    ? (transactionGroups[groupIdx - 1].items[0].date || '').slice(0, 10)
+                    : null;
+                  const showDateHeader = viewMode === 'range' && groupDate !== prevDate;
+                  return (
+                  <React.Fragment key={`${group.customerName}___${group.createdAt}`}>
+                  {showDateHeader && (
+                    <View style={{
+                      backgroundColor: '#EDF1F7', paddingVertical: 8, paddingHorizontal: 12,
+                      borderBottomWidth: 1, borderBottomColor: '#e0e0e0',
+                    }}>
+                      <Text style={{ fontSize: 14, fontWeight: '700', color: '#1B365D' }}>
+                        {formatDateHeader(groupDate)}
+                      </Text>
+                    </View>
+                  )}
+                  {group.items.map((item, itemIdx) => {
                     const isEditing = editingId === item.id;
                     const isFirstInGroup = itemIdx === 0;
                     const groupSize = group.items.length;
@@ -838,8 +886,10 @@ export default function HistoryScreen() {
                         </View>
                       </View>
                     );
-                  })
-                ))
+                  })}
+                  </React.Fragment>
+                  );
+                })
               )}
             </View>
         </ScrollView>
