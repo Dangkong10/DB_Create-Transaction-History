@@ -43,6 +43,8 @@ export interface TransactionItem {
   productName: string;
   quantity: number;
   unitPrice?: number;
+  /** 단가를 사용자가 수동 수정했는지 — true면 거래처 변경 시 특가 자동 재계산에서 제외 */
+  priceEdited?: boolean;
 }
 
 /**

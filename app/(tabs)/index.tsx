@@ -19,6 +19,7 @@ import { useToast } from "@/lib/toast-provider";
 import { useConfirm } from "@/lib/confirm-provider";
 import { loadCustomers, loadProducts } from "@/lib/storage";
 import { searchCustomers, searchProducts } from "@/lib/search-utils";
+import { findSpecialPrice, safeGetSpecialPrices, type SpecialPriceLite } from "@/lib/unit-price";
 import type { Customer, Product, TransactionItem } from "@/lib/types";
 import { saveTransactionOffline } from "@/lib/sync-manager";
 import { supabase } from "@/lib/supabase";
@@ -45,6 +46,8 @@ export default function HomeScreen() {
   // 데이터 상태
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+  /** 거래처별 특가 (조회 실패/오프라인 시 빈 배열 → 기본 단가로 동작) */
+  const [specialPrices, setSpecialPrices] = useState<SpecialPriceLite[]>([]);
   
   // 입력 상태
   const [customerQuery, setCustomerQuery] = useState("");
@@ -118,7 +121,33 @@ export default function HomeScreen() {
     ]);
     setCustomers(loadedCustomers);
     setProducts(loadedProducts);
+
+    // 특가는 논블로킹 로드 (실패해도 기본 단가로 동작)
+    safeGetSpecialPrices().then(setSpecialPrices);
   }
+
+  /** 특가 우선 단가 조회 — 특가 없으면 제품 기본 단가 (없으면 undefined) */
+  function resolveItemUnitPrice(customerName: string | undefined, productName: string): number | undefined {
+    if (customerName) {
+      const sp = findSpecialPrice(specialPrices, customerName, productName);
+      if (sp !== undefined) return sp;
+    }
+    return products.find((p) => p.name === productName)?.unitPrice;
+  }
+
+  // 거래처 선택/변경 또는 특가 로드 완료 시, 단가를 수동 수정하지 않은 품목은
+  // 새 거래처 기준(특가 포함)으로 단가 재계산
+  useEffect(() => {
+    if (!selectedCustomer) return;
+    setItems((prev) =>
+      prev.map((item) => {
+        const name = item.productName.trim();
+        if (item.priceEdited || !name) return item;
+        if (!products.some((p) => p.name === name)) return item;
+        return { ...item, unitPrice: resolveItemUnitPrice(selectedCustomer.name, name) };
+      })
+    );
+  }, [selectedCustomer, specialPrices]);
 
   // 거래처 검색
   useEffect(() => {
@@ -219,7 +248,9 @@ export default function HomeScreen() {
   function handleUpdateItem(id: string, field: "productName" | "quantity" | "unitPrice", value: string | number | undefined) {
     setItems(
       items.map((item) =>
-        item.id === id ? { ...item, [field]: value } : item
+        item.id === id
+          ? { ...item, [field]: value, ...(field === "unitPrice" ? { priceEdited: true } : {}) }
+          : item
       )
     );
     
@@ -240,9 +271,13 @@ export default function HomeScreen() {
   
   // 제품 선택
   function handleSelectProduct(itemId: string, product: Product) {
+    // 선택된 거래처의 특가가 있으면 특가, 없으면 기본 단가
+    const unitPrice = resolveItemUnitPrice(selectedCustomer?.name, product.name);
     setItems(
       items.map((item) =>
-        item.id === itemId ? { ...item, productName: product.name, unitPrice: product.unitPrice } : item
+        item.id === itemId
+          ? { ...item, productName: product.name, unitPrice, priceEdited: false }
+          : item
       )
     );
     

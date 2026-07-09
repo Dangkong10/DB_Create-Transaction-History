@@ -9,7 +9,7 @@
  */
 
 import { openPrintModal, formatNumber } from './print-preview';
-import { aggregateDailySummary, type DailySummaryRow } from './daily-summary-excel';
+import { aggregateDailySummary, type DailySummaryRow } from './daily-summary-aggregate';
 import type { Transaction } from './excel-utils';
 import { getReceiptBalancesForDate } from './payments';
 
@@ -26,11 +26,11 @@ interface RowBalance {
 export async function openDailySummaryPreview(
   transactions: Transaction[],
   dateStr: string,
-  getUnitPrice: (productName: string) => number,
 ): Promise<void> {
   // 해당 날짜 거래만 필터 → 당일 매출 있는 거래처 row 생성
+  // (단가는 거래 시점 저장값 사용 — 잔고 공식과 일치. 특가는 입력 화면에서 저장 시 반영됨)
   const filtered = transactions.filter((t) => t.date.startsWith(dateStr));
-  const aggregated = aggregateDailySummary(filtered, getUnitPrice);
+  const aggregated = aggregateDailySummary(filtered);
 
   // 전잔고 / 당일입금 조회 (실패해도 집계표는 정상 출력)
   const balances = new Map<string, RowBalance>();

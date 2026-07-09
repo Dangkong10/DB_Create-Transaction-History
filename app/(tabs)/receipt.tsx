@@ -24,6 +24,7 @@ import { searchCustomers } from "@/lib/search-utils";
 import { matchChosung } from "@/lib/hangul-utils";
 import { aggregateTransactions, groupByReceipt, filterByDate, type ReceiptGroup } from "@/lib/excel-utils";
 import { getPendingCustomers } from "@/lib/payments";
+import { createUnitPriceResolver, safeGetSpecialPrices, type SpecialPriceLite } from "@/lib/unit-price";
 import { useRouter } from "expo-router";
 import type { Customer, Product } from "@/lib/types";
 import * as Haptics from "expo-haptics";
@@ -41,6 +42,8 @@ export default function ReceiptScreen() {
   const [isExporting, setIsExporting] = useState(false);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+  /** 거래처별 특가 (조회 실패 시 빈 배열 → 기본 단가로 동작) */
+  const [specialPrices, setSpecialPrices] = useState<SpecialPriceLite[]>([]);
   const [customerQuery, setCustomerQuery] = useState("");
   const scrollViewRef = useRef<ScrollView>(null);
   const [showScrollTop, setShowScrollTop] = useState(false);
@@ -92,6 +95,9 @@ export default function ReceiptScreen() {
       ]);
       setCustomers(loadedCustomers);
       setProducts(loadedProducts);
+
+      // 특가는 논블로킹 로드 (실패해도 화면은 기본 단가로 표시)
+      safeGetSpecialPrices().then(setSpecialPrices);
 
       // 1) 로컬 IndexedDB 먼저 표시 (오프라인/세션 만료 시에도 동작)
       const localAll = await getLocalTransactions();
@@ -157,16 +163,18 @@ export default function ReceiptScreen() {
     return filterByDate(grouped, selectedDate);
   }, [selectedDate, transactions]);
 
-  // 단가 조회 헬퍼
-  const getUnitPrice = (productName: string) =>
-    products.find((p) => p.name === productName)?.unitPrice || 0;
+  // 단가 조회 헬퍼 (거래처별 특가 우선, 없으면 제품 기본 단가)
+  const getUnitPrice = useMemo(
+    () => createUnitPriceResolver(products, specialPrices),
+    [products, specialPrices],
+  );
 
   // 거래처별 통계 (품목 수, 총액)
   const customerStats = useMemo(() => {
     return dateReceipts.map((r) => {
       let total = 0;
       r.items.forEach((item) => {
-        const price = getUnitPrice(item.productName);
+        const price = getUnitPrice(r.customerName, item.productName);
         total += price * item.quantity;
       });
       return {
@@ -177,7 +185,7 @@ export default function ReceiptScreen() {
         receipt: r,
       };
     });
-  }, [dateReceipts, products]);
+  }, [dateReceipts, getUnitPrice]);
 
   // 전체 기간 거래처 수 (날짜 미선택 시 표시용)
   const allCustomerCount = useMemo(() => {
@@ -231,12 +239,8 @@ export default function ReceiptScreen() {
     if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setIsExporting(true);
     try {
-      const loadedProducts = await loadProducts();
-      const getUnitPrice = (name: string) =>
-        loadedProducts.find((p) => p.name === name)?.unitPrice || 0;
-
       const { openDailySummaryPreview } = await import("@/lib/print-daily-summary");
-      await openDailySummaryPreview(transactions as any, selectedDate, getUnitPrice);
+      await openDailySummaryPreview(transactions as any, selectedDate);
     } catch (error: any) {
       showToast(error?.message || "집계표 생성 실패", "error");
     } finally {

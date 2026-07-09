@@ -21,13 +21,12 @@ export type { DailySummaryRow };
 export async function generateDailySummaryExcel(
   transactions: Transaction[],
   date: Date,
-  getUnitPrice: (productName: string) => number
 ): Promise<ArrayBuffer | string> {
   const workbook = new ExcelJS.Workbook();
   const worksheet = workbook.addWorksheet('당일 집계표');
 
-  // 집계 데이터 생성
-  const summaryData = aggregateDailySummary(transactions, getUnitPrice);
+  // 집계 데이터 생성 (거래 시점 저장 단가 사용 — daily-summary-aggregate 참조)
+  const summaryData = aggregateDailySummary(transactions);
 
   // 날짜 포맷 (예: 2026-02-21)
   const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -148,10 +147,9 @@ export async function generateDailySummaryExcel(
 export async function downloadDailySummaryExcel(
   transactions: Transaction[],
   date: Date,
-  getUnitPrice: (productName: string) => number
 ): Promise<void> {
   try {
-    const result = await generateDailySummaryExcel(transactions, date, getUnitPrice);
+    const result = await generateDailySummaryExcel(transactions, date);
     const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
     const fileName = `당일집계표_${dateStr}.xlsx`;
 
