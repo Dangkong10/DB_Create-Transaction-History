@@ -13,7 +13,7 @@ import {
 } from "react-native";
 import "../custom-scrollbar.css";
 import * as Haptics from "expo-haptics";
-import { useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 
 import { ScreenContainer } from "@/components/screen-container";
 import { ResponsiveContainer } from "@/components/responsive-container";
@@ -50,7 +50,6 @@ import {
 } from "@/lib/excel-manage";
 import { PRODUCT_CATEGORIES } from "@/lib/data";
 import { getCustomerDisplayName, getProductDisplayName, searchCustomers, searchProducts } from "@/lib/search-utils";
-import { getSpecialPricesByCustomer, addSpecialPrice, deleteSpecialPrice } from "@/lib/supabase";
 import { useAuth } from "@/hooks/use-auth";
 import { useIsMounted } from "@/hooks/use-is-mounted";
 
@@ -62,6 +61,7 @@ type TabType = "customers" | "products" | "settings";
 
 export default function ManageScreen() {
   const { showToast } = useToast();
+  const router = useRouter();
   const { showConfirm } = useConfirm();
   const params = useLocalSearchParams();
   const [activeTab, setActiveTab] = useState<TabType>("customers");
@@ -163,13 +163,6 @@ export default function ManageScreen() {
   const [duplicateMode, setDuplicateMode] = useState<DuplicateMode>('skip');
   const [isImporting, setIsImporting] = useState(false);
 
-  const [specialPriceModalVisible, setSpecialPriceModalVisible] = useState(false);
-  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
-  const [specialPrices, setSpecialPrices] = useState<Array<{ id: string; productName: string; customPrice: number }>>([]);
-  const [newSpecialProductName, setNewSpecialProductName] = useState("");
-  const [newSpecialPrice, setNewSpecialPrice] = useState("");
-  const [specialProductSuggestions, setSpecialProductSuggestions] = useState<Product[]>([]);
-  const [showSpecialProductSuggestions, setShowSpecialProductSuggestions] = useState(false);
 
   useEffect(() => {
     console.log('로그인 상태 변경:', user ? `로그인됨 (${user.email})` : '로그아웃');
@@ -244,80 +237,6 @@ export default function ManageScreen() {
       setAddProductModalVisible(false);
       await loadData();
     } catch (error) { showToast("제품 추가에 실패했습니다.", "error"); }
-  }
-
-  async function handleOpenSpecialPriceModal(customer: Customer) {
-    setSelectedCustomer(customer);
-    setSpecialPriceModalVisible(true);
-    try {
-      const prices = await getSpecialPricesByCustomer(customer.name);
-      setSpecialPrices(prices);
-    } catch (error) {
-      console.error('Failed to load special prices:', error);
-      showToast('특가 목록을 불러오는 데 실패했습니다.', 'error');
-    }
-  }
-
-  function handleCloseSpecialPriceModal() {
-    setSpecialPriceModalVisible(false);
-    setSelectedCustomer(null); setSpecialPrices([]);
-    setNewSpecialProductName(""); setNewSpecialPrice("");
-  }
-
-  function handleSpecialProductNameChange(text: string) {
-    setNewSpecialProductName(text);
-    if (text.trim()) {
-      const suggestions = searchProducts(products, text);
-      setSpecialProductSuggestions(suggestions.slice(0, 5));
-      setShowSpecialProductSuggestions(suggestions.length > 0);
-    } else {
-      setSpecialProductSuggestions([]); setShowSpecialProductSuggestions(false);
-    }
-  }
-
-  function handleSelectSpecialProduct(product: Product) {
-    setNewSpecialProductName(product.name);
-    setSpecialProductSuggestions([]); setShowSpecialProductSuggestions(false);
-  }
-
-  async function handleAddSpecialPrice() {
-    if (!selectedCustomer || !newSpecialProductName.trim() || !newSpecialPrice.trim()) {
-      showToast('모든 필드를 입력해주세요.', 'info'); return;
-    }
-    const price = Number(newSpecialPrice);
-    if (isNaN(price) || price <= 0) { showToast('유효한 가격을 입력해주세요.', 'info'); return; }
-    try {
-      await addSpecialPrice(selectedCustomer.name, newSpecialProductName.trim(), price);
-      if (Platform.OS !== "web") { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); }
-      showToast('특가가 추가되었습니다.', 'success');
-      const prices = await getSpecialPricesByCustomer(selectedCustomer.name);
-      setSpecialPrices(prices);
-      setNewSpecialProductName(""); setNewSpecialPrice("");
-    } catch (error) {
-      console.error('Failed to add special price:', error);
-      showToast('특가 추가에 실패했습니다.', 'error');
-    }
-  }
-
-  async function handleDeleteSpecialPrice(id: string) {
-    showConfirm({
-      message: '이 특가를 삭제하시겠습니까?',
-      confirmText: '삭제',
-      onConfirm: async () => {
-        try {
-          await deleteSpecialPrice(id);
-          if (Platform.OS !== "web") { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); }
-          showToast('특가가 삭제되었습니다.', 'success');
-          if (selectedCustomer) {
-            const prices = await getSpecialPricesByCustomer(selectedCustomer.name);
-            setSpecialPrices(prices);
-          }
-        } catch (error) {
-          console.error('Failed to delete special price:', error);
-          showToast('특가 삭제에 실패했습니다.', 'error');
-        }
-      },
-    });
   }
 
   async function handleDeleteCustomer(customer: Customer) {
@@ -607,7 +526,7 @@ export default function ManageScreen() {
                     </View>
                     <View style={{ flexDirection: 'row', gap: 8 }}>
                       <TouchableOpacity
-                        onPress={() => handleOpenSpecialPriceModal(item)}
+                        onPress={() => router.push(`/special-price?customer=${encodeURIComponent(item.name)}`)}
                         style={{ backgroundColor: '#1B365D', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 }}
                       >
                         <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600' }}>특가 설정</Text>
@@ -1274,119 +1193,6 @@ export default function ManageScreen() {
         </View>
       </Modal>
 
-      {/* 특가 설정 모달 */}
-      <Modal
-        visible={specialPriceModalVisible}
-        transparent
-        animationType="slide"
-        onRequestClose={handleCloseSpecialPriceModal}
-      >
-        <View style={{
-          flex: 1, backgroundColor: 'rgba(0,0,0,0.5)',
-          justifyContent: 'center', alignItems: 'center', padding: 16,
-        }}>
-          <View style={{
-            backgroundColor: '#ffffff', borderRadius: 14, width: '100%', maxWidth: 440, padding: 24,
-            ...SHADOW,
-          }}>
-            <Text style={{ fontSize: 20, fontWeight: '700', color: '#1B365D', marginBottom: 16 }}>
-              {selectedCustomer?.name} 특가 설정
-            </Text>
-
-            {/* 특가 추가 폼 */}
-            <View style={{ marginBottom: 16 }}>
-              <Text style={{ fontSize: 14, color: '#666666', marginBottom: 8 }}>제품명</Text>
-              <View>
-                <TextInput
-                  value={newSpecialProductName}
-                  onChangeText={handleSpecialProductNameChange}
-                  placeholder="제품명 입력 (초성 검색 가능)"
-                  placeholderTextColor="#666666"
-                  style={{
-                    backgroundColor: '#f5f5f5', borderRadius: 10, padding: 12,
-                    borderWidth: 1, borderColor: '#e0e0e0', fontSize: 16, color: '#1B365D', marginBottom: 12,
-                  }}
-                />
-                {showSpecialProductSuggestions && specialProductSuggestions.length > 0 && (
-                  <View style={{
-                    position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50,
-                    backgroundColor: '#ffffff', borderWidth: 1, borderColor: '#e0e0e0',
-                    borderRadius: 10, marginTop: 4, maxHeight: 192, ...SHADOW,
-                  }}>
-                    <ScrollView>
-                      {specialProductSuggestions.map((product) => (
-                        <TouchableOpacity
-                          key={product.name}
-                          onPress={() => handleSelectSpecialProduct(product)}
-                          style={{ padding: 12, borderBottomWidth: 1, borderBottomColor: '#e0e0e0' }}
-                        >
-                          <Text style={{ color: '#1B365D', fontWeight: '500' }}>{product.name}</Text>
-                          {product.aliases.length > 0 && (
-                            <Text style={{ color: '#666666', fontSize: 14 }}>({product.aliases.join(', ')})</Text>
-                          )}
-                        </TouchableOpacity>
-                      ))}
-                    </ScrollView>
-                  </View>
-                )}
-              </View>
-
-              <Text style={{ fontSize: 14, color: '#666666', marginBottom: 8 }}>특가 (원)</Text>
-              <TextInput
-                value={newSpecialPrice}
-                onChangeText={setNewSpecialPrice}
-                placeholder="특가 입력"
-                placeholderTextColor="#666666"
-                keyboardType="numeric"
-                style={{
-                  backgroundColor: '#f5f5f5', borderRadius: 10, padding: 12,
-                  borderWidth: 1, borderColor: '#e0e0e0', fontSize: 16, color: '#1B365D', marginBottom: 12,
-                }}
-              />
-              <TouchableOpacity
-                onPress={handleAddSpecialPrice}
-                style={{ backgroundColor: '#1B365D', paddingVertical: 12, borderRadius: 10 }}
-              >
-                <Text style={{ color: '#fff', fontWeight: '600', textAlign: 'center', fontSize: 16 }}>특가 추가</Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* 특가 목록 */}
-            <Text style={{ fontSize: 14, fontWeight: '600', color: '#1B365D', marginBottom: 8 }}>등록된 특가</Text>
-            <ScrollView style={{ maxHeight: 256, marginBottom: 16 }}>
-              {specialPrices.length === 0 ? (
-                <Text style={{ color: '#666666', textAlign: 'center', paddingVertical: 16 }}>등록된 특가가 없습니다.</Text>
-              ) : (
-                specialPrices.map((item) => (
-                  <View key={item.id} style={{
-                    backgroundColor: '#f5f5f5', padding: 12, borderRadius: 10, marginBottom: 8,
-                    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-                  }}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={{ color: '#1B365D', fontWeight: '500' }}>{item.productName}</Text>
-                      <Text style={{ color: '#1B365D', fontSize: 14, fontWeight: '600' }}>{item.customPrice.toLocaleString()}원</Text>
-                    </View>
-                    <TouchableOpacity
-                      onPress={() => handleDeleteSpecialPrice(item.id)}
-                      style={{ backgroundColor: '#e74c3c', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 }}
-                    >
-                      <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600' }}>삭제</Text>
-                    </TouchableOpacity>
-                  </View>
-                ))
-              )}
-            </ScrollView>
-
-            {/* 닫기 */}
-            <TouchableOpacity
-              onPress={handleCloseSpecialPriceModal}
-              style={{ backgroundColor: '#e0e0e0', paddingVertical: 12, borderRadius: 10 }}
-            >
-              <Text style={{ color: '#1B365D', fontWeight: '600', textAlign: 'center', fontSize: 16 }}>닫기</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
     </ScreenContainer>
   );
 }

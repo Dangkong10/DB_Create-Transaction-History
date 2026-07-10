@@ -12,19 +12,50 @@ export interface SpecialPriceLite {
   customerName: string;
   productName: string;
   customPrice: number;
+  /** 기본가 연동 조정액 (예: -1000 = 기본가−1,000원 유지). null/undefined = 고정 특가 */
+  priceOffset?: number | null;
 }
 
 /**
- * (거래처, 제품)에 설정된 특가 조회 — 없으면 undefined (0원 특가는 유효값)
+ * (거래처, 제품)에 설정된 특가 레코드 조회 — 없으면 undefined
+ */
+export function findSpecialPriceRecord(
+  specialPrices: SpecialPriceLite[],
+  customerName: string,
+  productName: string,
+): SpecialPriceLite | undefined {
+  return specialPrices.find(
+    (s) => s.customerName === customerName && s.productName === productName,
+  );
+}
+
+/**
+ * 특가 레코드의 실제 금액 계산.
+ * - 연동 특가(priceOffset 있음) + 기본가 있음 → 기본가 + 조정액 (0원 미만 방지)
+ * - 그 외 → 저장된 customPrice (0원 특가도 유효값)
+ */
+export function resolveSpecialAmount(
+  sp: SpecialPriceLite,
+  basePrice: number | undefined,
+): number {
+  if (sp.priceOffset !== null && sp.priceOffset !== undefined && basePrice !== undefined) {
+    return Math.max(0, basePrice + sp.priceOffset);
+  }
+  return sp.customPrice;
+}
+
+/**
+ * (거래처, 제품)에 설정된 특가 금액 조회 — 없으면 undefined (0원 특가는 유효값)
+ * 연동 특가는 basePrice 기준으로 계산.
  */
 export function findSpecialPrice(
   specialPrices: SpecialPriceLite[],
   customerName: string,
   productName: string,
+  basePrice?: number,
 ): number | undefined {
-  return specialPrices.find(
-    (s) => s.customerName === customerName && s.productName === productName,
-  )?.customPrice;
+  const sp = findSpecialPriceRecord(specialPrices, customerName, productName);
+  return sp ? resolveSpecialAmount(sp, basePrice) : undefined;
 }
 
 /**
@@ -35,9 +66,10 @@ export function createUnitPriceResolver(
   specialPrices: SpecialPriceLite[],
 ): (customerName: string, productName: string) => number {
   return (customerName, productName) => {
-    const sp = findSpecialPrice(specialPrices, customerName, productName);
-    if (sp !== undefined) return sp;
-    return products.find((p) => p.name === productName)?.unitPrice ?? 0;
+    const base = products.find((p) => p.name === productName)?.unitPrice;
+    const sp = findSpecialPriceRecord(specialPrices, customerName, productName);
+    if (sp) return resolveSpecialAmount(sp, base);
+    return base ?? 0;
   };
 }
 

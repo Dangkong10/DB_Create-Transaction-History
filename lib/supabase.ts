@@ -314,6 +314,7 @@ export async function getSpecialPrices(): Promise<SpecialPrice[]> {
     customerName: row.customer_name,
     productName: row.product_name,
     customPrice: row.custom_price,
+    priceOffset: row.price_offset ?? null,
   }));
 }
 
@@ -342,6 +343,7 @@ export async function getSpecialPricesByCustomer(
     customerName: row.customer_name,
     productName: row.product_name,
     customPrice: row.custom_price,
+    priceOffset: row.price_offset ?? null,
   }));
 }
 
@@ -372,33 +374,53 @@ export async function getSpecialPrice(
 
 /**
  * 특가 추가 (이미 존재하면 업데이트)
+ *
+ * @param priceOffset 기본가 연동 조정액 (예: -1000). null = 고정 특가.
+ *   price_offset 컬럼이 아직 없는 DB(마이그레이션 전)에서는
+ *   고정 특가만 시도하고, 연동 특가는 명확한 에러를 던진다.
  */
 export async function addSpecialPrice(
   customerName: string,
   productName: string,
-  customPrice: number
+  customPrice: number,
+  priceOffset: number | null = null
 ): Promise<void> {
   const session = await getSession();
   if (!session) throw new Error('로그인이 필요합니다.');
 
-  const { error } = await supabase
+  const base = {
+    user_id: getUserId(session),
+    customer_name: customerName,
+    product_name: productName,
+    custom_price: customPrice,
+  };
+
+  let { error } = await supabase
     .from('special_prices')
     .upsert(
-      {
-        user_id: getUserId(session),
-        customer_name: customerName,
-        product_name: productName,
-        custom_price: customPrice,
-      },
+      { ...base, price_offset: priceOffset },
       { onConflict: 'user_id,customer_name,product_name' }
     );
+
+  // price_offset 컬럼 미존재(마이그레이션 전) 폴백
+  if (error && /price_offset/.test(error.message)) {
+    if (priceOffset !== null) {
+      throw new Error(
+        '기본가 연동 특가를 쓰려면 DB에 price_offset 컬럼이 필요합니다.\n' +
+        'Supabase SQL Editor에서 실행: ALTER TABLE public.special_prices ADD COLUMN IF NOT EXISTS price_offset INTEGER;'
+      );
+    }
+    ({ error } = await supabase
+      .from('special_prices')
+      .upsert(base, { onConflict: 'user_id,customer_name,product_name' }));
+  }
 
   if (error) {
     console.error('[addSpecialPrice] Error:', error);
     throw new Error(`특가 추가 실패: ${error.message}`);
   }
 
-  console.log('[addSpecialPrice] Added:', customerName, productName, customPrice);
+  console.log('[addSpecialPrice] Added:', customerName, productName, customPrice, 'offset:', priceOffset);
 }
 
 /**

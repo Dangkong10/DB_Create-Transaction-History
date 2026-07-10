@@ -4,6 +4,7 @@
  */
 
 import ExcelJS from "exceljs";
+import { resolveSpecialAmount, type SpecialPriceLite } from './unit-price';
 import { ReceiptGroup } from "./excel-utils";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
@@ -45,7 +46,7 @@ export async function generateReceiptExcel(
   const products = await loadProducts();
   
   // 특가 목록 조회
-  let specialPrices: Array<{ customerName: string; productName: string; customPrice: number }> = [];
+  let specialPrices: SpecialPriceLite[] = [];
   try {
     const { getSpecialPrices } = await import('./supabase');
     specialPrices = await getSpecialPrices();
@@ -182,7 +183,7 @@ function drawReceipt(
   startRow: number,
   startCol: number,
   products: Product[],
-  specialPrices: Array<{ customerName: string; productName: string; customPrice: number }>
+  specialPrices: SpecialPriceLite[]
 ): void {
   let currentRowOffset = 0;
 
@@ -301,7 +302,7 @@ function drawReceipt(
         }
       );
       const product = products.find(p => p.name === item.productName);
-      const unitPrice = specialPrice?.customPrice ?? product?.unitPrice;
+      const unitPrice = specialPrice ? resolveSpecialAmount(specialPrice, product?.unitPrice) : product?.unitPrice;
       
       console.log(`[Price Match] 특가 찾기 결과:`, specialPrice);
       console.log(`[Price Match] 기본 단가:`, product?.unitPrice);
@@ -371,7 +372,7 @@ function drawOversizedReceipt(
   startRow: number,
   startCol: number,
   products: Product[],
-  specialPrices: Array<{ customerName: string; productName: string; customPrice: number }>
+  specialPrices: SpecialPriceLite[]
 ): void {
   let currentRowOffset = 0;
 
@@ -486,7 +487,7 @@ function drawOversizedReceipt(
       }
     );
     const product = products.find(p => p.name === item.productName);
-    const unitPrice = specialPrice?.customPrice ?? product?.unitPrice;
+    const unitPrice = specialPrice ? resolveSpecialAmount(specialPrice, product?.unitPrice) : product?.unitPrice;
     
     console.log(`[Oversized Price Match] 특가 찾기 결과:`, specialPrice);
     console.log(`[Oversized Price Match] 최종 단가:`, unitPrice);

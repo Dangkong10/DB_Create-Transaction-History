@@ -20,6 +20,9 @@ import { useConfirm } from "@/lib/confirm-provider";
 import { loadCustomers, loadProducts } from "@/lib/storage";
 import { searchCustomers, searchProducts } from "@/lib/search-utils";
 import { findSpecialPrice, safeGetSpecialPrices, type SpecialPriceLite } from "@/lib/unit-price";
+import { PillToggle } from "@/components/pill-toggle";
+import { ShipIcon, ReturnIcon } from "@/components/pill-icons";
+import { FadeSwitch } from "@/components/fade-switch";
 import type { Customer, Product, TransactionItem } from "@/lib/types";
 import { saveTransactionOffline } from "@/lib/sync-manager";
 import { supabase } from "@/lib/supabase";
@@ -126,13 +129,14 @@ export default function HomeScreen() {
     safeGetSpecialPrices().then(setSpecialPrices);
   }
 
-  /** 특가 우선 단가 조회 — 특가 없으면 제품 기본 단가 (없으면 undefined) */
+  /** 특가 우선 단가 조회 — 특가 없으면 제품 기본 단가 (없으면 undefined). 연동 특가는 기본가 기준 계산 */
   function resolveItemUnitPrice(customerName: string | undefined, productName: string): number | undefined {
+    const base = products.find((p) => p.name === productName)?.unitPrice;
     if (customerName) {
-      const sp = findSpecialPrice(specialPrices, customerName, productName);
+      const sp = findSpecialPrice(specialPrices, customerName, productName, base);
       if (sp !== undefined) return sp;
     }
-    return products.find((p) => p.name === productName)?.unitPrice;
+    return base;
   }
 
   // 거래처 선택/변경 또는 특가 로드 완료 시, 단가를 수동 수정하지 않은 품목은
@@ -433,56 +437,30 @@ export default function HomeScreen() {
               </Text>
             </View>
 
-            {/* 출고/반품 탭 */}
-            <View style={{
-              flexDirection: 'row', marginTop: 16, borderRadius: 10, overflow: 'hidden',
-              borderWidth: 2, borderColor: isCancellation ? '#e74c3c' : '#e0e0e0',
-              ...(Platform.OS === 'web'
-                ? { boxShadow: '0 2px 12px rgba(0,0,0,0.06)' } as any
-                : { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 12, elevation: 3 }),
-            }}>
-              <TouchableOpacity
-                onPress={() => {
-                  setIsCancellation(false);
-                  if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                }}
-                style={{
-                  flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-                  gap: 6, paddingVertical: 12,
-                  backgroundColor: !isCancellation ? '#1B365D' : '#ffffff',
-                }}
-                activeOpacity={0.7}
-              >
-                <MaterialIcons name="local-shipping" size={18} color={!isCancellation ? '#ffffff' : '#666666'} />
-                <Text style={{ fontSize: 16, fontWeight: '700', color: !isCancellation ? '#ffffff' : '#666666' }}>출고</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => {
-                  setIsCancellation(true);
-                  if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                }}
-                style={{
-                  flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-                  gap: 6, paddingVertical: 12,
-                  backgroundColor: isCancellation ? '#e74c3c' : '#ffffff',
-                }}
-                activeOpacity={0.7}
-              >
-                <MaterialIcons name="undo" size={18} color={isCancellation ? '#ffffff' : '#666666'} />
-                <Text style={{ fontSize: 16, fontWeight: '700', color: isCancellation ? '#ffffff' : '#666666' }}>반품</Text>
-              </TouchableOpacity>
+            {/* 출고/반품 알약 토글 */}
+            <View style={{ marginTop: 16 }}>
+              <PillToggle
+                options={[
+                  { key: 'ship', label: '출고', color: '#1B365D', icon: ShipIcon },
+                  { key: 'return', label: '반품', color: '#e74c3c', icon: ReturnIcon },
+                ]}
+                value={isCancellation ? 'return' : 'ship'}
+                onChange={(key) => setIsCancellation(key === 'return')}
+              />
             </View>
 
-            {/* 반품 모드 경고 배너 */}
+            {/* 반품 모드 경고 배너 — 부드럽게 페이드인 */}
             {isCancellation && (
-              <View style={{
-                backgroundColor: '#fde8e8', borderRadius: 8, paddingVertical: 8, paddingHorizontal: 16,
-                marginTop: 12,
-              }}>
-                <Text style={{ color: '#e74c3c', fontWeight: '600', fontSize: 14, textAlign: 'center' }}>
-                  반품 거래를 입력합니다
-                </Text>
-              </View>
+              <FadeSwitch switchKey="return-banner" appear>
+                <View style={{
+                  backgroundColor: '#fde8e8', borderRadius: 8, paddingVertical: 8, paddingHorizontal: 16,
+                  marginTop: 12,
+                }}>
+                  <Text style={{ color: '#e74c3c', fontWeight: '600', fontSize: 14, textAlign: 'center' }}>
+                    반품 거래를 입력합니다
+                  </Text>
+                </View>
+              </FadeSwitch>
             )}
           </View>
 

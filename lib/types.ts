@@ -77,6 +77,12 @@ export interface SpecialPrice {
   customerName: string;
   /** 제품명 */
   productName: string;
-  /** 특가 (원 단위) */
+  /** 특가 (원 단위) — 연동 특가면 저장 시점 계산값(스냅샷) */
   customPrice: number;
+  /**
+   * 기본가 연동 조정액 (예: -1000 = 기본가보다 1,000원 낮게 유지).
+   * 값이 있으면 제품 기본 단가가 바뀔 때 특가도 자동으로 따라간다.
+   * null/undefined = 고정 특가.
+   */
+  priceOffset?: number | null;
 }

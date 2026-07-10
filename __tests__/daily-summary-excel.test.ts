@@ -212,6 +212,27 @@ describe('단가 리졸버 (특가 반영)', () => {
     expect(resolve('고려', '미등록제품')).toBe(0);
   });
 
+  it('기본가 연동 특가(priceOffset)는 기본가 ± 조정액으로 계산해야 함', () => {
+    const linked = [
+      { customerName: '고려', productName: '12합', customPrice: 13000, priceOffset: -1000 },
+    ];
+    const resolve = createUnitPriceResolver(products, linked);
+    // 기본가 14000 - 1000 = 13000
+    expect(resolve('고려', '12합')).toBe(13000);
+    // 기본가가 15000으로 바뀐 상황 — 연동 특가는 자동으로 14000
+    const raisedProducts = products.map((p) => (p.name === '12합' ? { ...p, unitPrice: 15000 } : p));
+    const resolve2 = createUnitPriceResolver(raisedProducts, linked);
+    expect(resolve2('고려', '12합')).toBe(14000);
+  });
+
+  it('연동 특가인데 기본가가 없으면 저장된 customPrice로 폴백해야 함', () => {
+    const linked = [
+      { customerName: '고려', productName: '단가없음', customPrice: 8000, priceOffset: -1000 },
+    ];
+    const resolve = createUnitPriceResolver(products, linked);
+    expect(resolve('고려', '단가없음')).toBe(8000);
+  });
+
   it('특가로 저장된 거래는 저장 단가 그대로 집계된다 (입력 화면 특가 자동 저장과 합쳐져 특가 반영)', async () => {
     // 입력 화면이 특가 거래처에 12000을 저장, 일반 거래처에 14000을 저장한 상황
     const transactions: Transaction[] = [

@@ -10,6 +10,7 @@ import { aggregateTransactions, groupByReceipt, filterByDate, type ReceiptGroup 
 import { loadProducts } from './storage';
 import type { Transaction } from './excel-utils';
 import type { Product } from './types';
+import { resolveSpecialAmount, type SpecialPriceLite } from './unit-price';
 import { getReceiptBalancesForDate, type ReceiptBalances } from './payments';
 
 // 영수증 높이 계산 상수 (pt 단위)
@@ -30,7 +31,7 @@ export async function openReceiptPreview(
   const products = await loadProducts();
 
   // 특가 목록
-  let specialPrices: Array<{ customerName: string; productName: string; customPrice: number }> = [];
+  let specialPrices: SpecialPriceLite[] = [];
   try {
     const { getSpecialPrices } = await import('./supabase');
     specialPrices = await getSpecialPrices();
@@ -94,7 +95,7 @@ function buildReceiptHtml(
   normal: ReceiptGroup[],
   oversized: ReceiptGroup[],
   products: Product[],
-  specialPrices: Array<{ customerName: string; productName: string; customPrice: number }>,
+  specialPrices: SpecialPriceLite[],
   balancesByCustomer: Map<string, ReceiptBalances>,
 ): string {
   const parts: string[] = [];
@@ -167,7 +168,7 @@ function buildReceiptHtml(
 function buildSingleReceipt(
   receipt: ReceiptGroup,
   products: Product[],
-  specialPrices: Array<{ customerName: string; productName: string; customPrice: number }>,
+  specialPrices: SpecialPriceLite[],
   maxRows: number,
   previousBalance: number = 0,
 ): string {
@@ -183,7 +184,7 @@ function buildSingleReceipt(
         (s) => s.customerName === receipt.customerName && s.productName === item.productName,
       );
       const prod = products.find((p) => p.name === item.productName);
-      const unitPrice = sp?.customPrice ?? prod?.unitPrice;
+      const unitPrice = sp ? resolveSpecialAmount(sp, prod?.unitPrice) : prod?.unitPrice;
       const itemTotal = unitPrice && unitPrice > 0 ? unitPrice * item.quantity : 0;
       totalPrice += itemTotal;
 
