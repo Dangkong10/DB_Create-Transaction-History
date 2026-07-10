@@ -39,27 +39,41 @@ export function extractChosung(text: string): string {
 
 /**
  * 초성 검색 매칭
+ *
+ * 검색어를 글자 단위로 비교한다:
+ * - 초성 낱자(ㄷ, ㅇ …)는 대상 글자의 초성과 비교
+ * - 완성된 글자(도, 원 …)·영문·숫자는 글자 그대로 비교
+ *
+ * 이렇게 해야 "도원"처럼 완성 글자를 입력했을 때 초성만 같은
+ * 다른 거래처(덕윤모사, 대영 = ㄷㅇ…)가 함께 뜨지 않는다.
+ *
  * @param text 검색 대상 텍스트 (예: "홍길동")
- * @param query 검색어 (예: "ㅎㄱㄷ" 또는 "홍길")
+ * @param query 검색어 (예: "ㅎㄱㄷ", "홍길", "홍ㄱ")
  * @returns 매칭 여부
  */
 export function matchChosung(text: string, query: string): boolean {
   if (!query) return true; // 검색어가 없으면 모두 매칭
-  
+
   const normalizedText = text.toLowerCase();
   const normalizedQuery = query.toLowerCase();
-  
+
   // 1. 일반 문자열 포함 검색 (부분 일치)
   if (normalizedText.includes(normalizedQuery)) {
     return true;
   }
-  
-  // 2. 초성 검색
-  const textChosung = extractChosung(text);
-  const queryChosung = extractChosung(query);
-  
-  // 초성이 처음부터 일치하는지 확인
-  return textChosung.startsWith(queryChosung);
+
+  // 2. 글자 단위 앞부분 매칭 (초성 낱자만 초성 비교, 완성 글자는 그대로 비교)
+  if (query.length > text.length) return false;
+  for (let i = 0; i < query.length; i++) {
+    const q = query[i];
+    const t = text[i];
+    if (CHOSUNG_LIST.includes(q)) {
+      if (getChosung(t) !== q) return false;
+    } else if (t.toLowerCase() !== q.toLowerCase()) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /**
