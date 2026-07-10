@@ -25,6 +25,8 @@ import { matchChosung } from "@/lib/hangul-utils";
 import { aggregateTransactions, groupByReceipt, filterByDate, type ReceiptGroup } from "@/lib/excel-utils";
 import { getPendingCustomers } from "@/lib/payments";
 import { createUnitPriceResolver, safeGetSpecialPrices, type SpecialPriceLite } from "@/lib/unit-price";
+import { MonthlyCalendar } from "@/components/monthly-calendar";
+import { toLocalDateStr } from "@/lib/date-range-utils";
 import { useRouter } from "expo-router";
 import type { Customer, Product } from "@/lib/types";
 import * as Haptics from "expo-haptics";
@@ -45,6 +47,8 @@ export default function ReceiptScreen() {
   /** 거래처별 특가 (조회 실패 시 빈 배열 → 기본 단가로 동작) */
   const [specialPrices, setSpecialPrices] = useState<SpecialPriceLite[]>([]);
   const [customerQuery, setCustomerQuery] = useState("");
+  const [calendarOpen, setCalendarOpen] = useState(false);
+  const calendarWrapperRef = useRef<View>(null);
   const scrollViewRef = useRef<ScrollView>(null);
   const [showScrollTop, setShowScrollTop] = useState(false);
   /** 입금 입력 대기 중인 거래처 수 (미수 > 0). 마이그레이션 미적용 시 0. */
@@ -225,6 +229,35 @@ export default function ReceiptScreen() {
     }
   };
 
+  // 달력 팝업: 바깥 클릭 / ESC 로 닫기 (web 전용 — history 탭과 동일 패턴)
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof document === 'undefined') return;
+    if (!calendarOpen) return;
+
+    const handleClickOutside = (e: MouseEvent) => {
+      const node = calendarWrapperRef.current as unknown as HTMLElement | null;
+      if (node && !node.contains(e.target as Node)) {
+        setCalendarOpen(false);
+      }
+    };
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setCalendarOpen(false);
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleEsc);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleEsc);
+    };
+  }, [calendarOpen]);
+
+  const handleYesterdayClick = () => {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    setSelectedDate(toLocalDateStr(d));
+  };
+
   const handleTodayClick = () => {
     const d = new Date();
     setSelectedDate(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
@@ -268,9 +301,12 @@ export default function ReceiptScreen() {
 
   if (isLoading) {
     return (
-      <ScreenContainer style={{ backgroundColor: '#f5f5f5', justifyContent: 'center', alignItems: 'center' }}>
-        <ActivityIndicator size="large" color="#1B365D" />
-        <Text style={{ marginTop: 16, color: '#666666' }}>데이터 로딩 중...</Text>
+      <ScreenContainer style={{ backgroundColor: '#f5f5f5' }}>
+        {/* 화면 정중앙 로딩 표시 */}
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+          <ActivityIndicator size="large" color="#1B365D" />
+          <Text style={{ marginTop: 16, color: '#666666' }}>데이터 로딩 중...</Text>
+        </View>
       </ScreenContainer>
     );
   }
@@ -297,31 +333,83 @@ export default function ReceiptScreen() {
               </Text>
             </View>
 
-            {/* 날짜 선택 */}
+            {/* 날짜 선택 — 입력칸을 누르면 달력 팝업 */}
             <View style={{
               backgroundColor: '#ffffff', borderRadius: 14, padding: 16,
               borderWidth: 1, borderColor: '#e0e0e0', ...SHADOW,
+              zIndex: 100,
             }}>
               <Text style={{ fontSize: 16, fontWeight: '600', color: '#1B365D', marginBottom: 12 }}>
                 날짜 선택
               </Text>
-              <View style={{ flexDirection: 'row', gap: 8 }}>
+              <View ref={calendarWrapperRef} style={{ flexDirection: 'row', gap: 8, position: 'relative', zIndex: 100 }}>
                 <TextInput
                   value={selectedDate}
                   onChangeText={setSelectedDate}
+                  onFocus={() => setCalendarOpen(true)}
                   placeholder="YYYY-MM-DD (예: 2026-04-18)"
                   placeholderTextColor="#666666"
                   style={{
-                    flex: 1, backgroundColor: '#f5f5f5', borderWidth: 1, borderColor: '#e0e0e0',
+                    flex: 1, backgroundColor: '#f5f5f5', borderWidth: 1,
+                    borderColor: calendarOpen ? '#1B365D' : '#e0e0e0',
                     borderRadius: 10, paddingHorizontal: 16, paddingVertical: 12, fontSize: 16, color: '#1B365D',
                   }}
                 />
                 <TouchableOpacity
-                  onPress={handleTodayClick}
-                  style={{ backgroundColor: '#1B365D', paddingHorizontal: 16, paddingVertical: 12, borderRadius: 10 }}
+                  onPress={() => { handleYesterdayClick(); setCalendarOpen(false); }}
+                  style={{
+                    backgroundColor: '#ffffff', borderWidth: 1.5, borderColor: '#1B365D',
+                    paddingHorizontal: 16, height: 48, minWidth: 64,
+                    alignItems: 'center', justifyContent: 'center', borderRadius: 10,
+                  }}
+                >
+                  <Text style={{ color: '#1B365D', fontWeight: '600', fontSize: 15 }}>어제</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => { handleTodayClick(); setCalendarOpen(false); }}
+                  style={{
+                    backgroundColor: '#1B365D',
+                    paddingHorizontal: 16, height: 48, minWidth: 64,
+                    alignItems: 'center', justifyContent: 'center', borderRadius: 10,
+                  }}
                 >
                   <Text style={{ color: '#fff', fontWeight: '600', fontSize: 15 }}>오늘</Text>
                 </TouchableOpacity>
+
+                {/* 달력 팝업 */}
+                {calendarOpen && (
+                  <View
+                    style={{
+                      position: 'absolute',
+                      top: '100%',
+                      left: 0,
+                      marginTop: 8,
+                      width: 300,
+                      maxWidth: 320,
+                      zIndex: 100,
+                      backgroundColor: '#ffffff',
+                      borderRadius: 14,
+                      borderWidth: 1,
+                      borderColor: '#e0e0e0',
+                      padding: 14,
+                      ...(Platform.OS === 'web'
+                        ? { boxShadow: '0 4px 16px rgba(0,0,0,0.10)' } as any
+                        : { shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.10, shadowRadius: 16, elevation: 8 }),
+                    }}
+                  >
+                    <MonthlyCalendar
+                      selectedDate={selectedDate || toLocalDateStr(new Date())}
+                      onDateSelect={(date) => {
+                        setSelectedDate(date);
+                        setCalendarOpen(false);
+                      }}
+                      onGoToToday={() => {
+                        handleTodayClick();
+                        setCalendarOpen(false);
+                      }}
+                    />
+                  </View>
+                )}
               </View>
             </View>
 

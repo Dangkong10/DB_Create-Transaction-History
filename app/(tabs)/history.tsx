@@ -26,6 +26,9 @@ import { useIsMounted } from "@/hooks/use-is-mounted";
 import { useSync } from "@/hooks/use-sync";
 import { SyncStatusBadge } from "@/components/sync-status-badge";
 import { filterByChosung } from "@/lib/chosung-utils";
+import { PillToggle } from "@/components/pill-toggle";
+import { DayIcon, RangeIcon } from "@/components/pill-icons";
+import { FadeSwitch } from "@/components/fade-switch";
 import { getQuickRange, toLocalDateStr, formatDateHeader, DATE_RE, type QuickRangeKey } from "@/lib/date-range-utils";
 import { MonthlyCalendar } from "@/components/monthly-calendar";
 import { PeriodExportModal } from "@/components/period-export-modal";
@@ -429,33 +432,20 @@ export default function HistoryScreen() {
             )}
           </View>
 
-          {/* 당일/기간 모드 토글 */}
-          <View style={{
-            flexDirection: 'row', backgroundColor: '#ffffff', borderRadius: 12,
-            padding: 4, gap: 4, marginBottom: 12, ...SHADOW,
-          }}>
-            {([
-              { key: 'day', label: '📅 당일' },
-              { key: 'range', label: '📆 기간' },
-            ] as { key: 'day' | 'range'; label: string }[]).map((tab) => {
-              const active = viewMode === tab.key;
-              return (
-                <TouchableOpacity
-                  key={tab.key}
-                  onPress={() => switchMode(tab.key)}
-                  style={{
-                    flex: 1, paddingVertical: 10, borderRadius: 9, alignItems: 'center',
-                    backgroundColor: active ? '#1B365D' : 'transparent',
-                  }}
-                >
-                  <Text style={{ fontSize: 14, fontWeight: '600', color: active ? '#ffffff' : '#666666' }}>
-                    {tab.label}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
+          {/* 당일/기간 알약 토글 */}
+          <View style={{ marginBottom: 12 }}>
+            <PillToggle
+              options={[
+                { key: 'day', label: '당일', color: '#1B365D', icon: DayIcon },
+                { key: 'range', label: '기간', color: '#2C5F2D', icon: RangeIcon },
+              ]}
+              value={viewMode}
+              onChange={(key) => switchMode(key as 'day' | 'range')}
+            />
           </View>
 
+          {/* 모드 전환 시 아래 내용이 부드럽게 페이드인 */}
+          <FadeSwitch switchKey={viewMode}>
           {/* 날짜 네비게이션 (당일 모드) */}
           {viewMode === 'day' && (
           <View style={{
@@ -606,6 +596,8 @@ export default function HistoryScreen() {
             </View>
             )}
 
+            {/* 기간 집계는 기간 모드 전용 — 당일 모드는 달력만 */}
+            {viewMode === 'range' && (
             <TouchableOpacity
               onPress={() => setPeriodModalOpen(true)}
               style={{
@@ -616,6 +608,7 @@ export default function HistoryScreen() {
                 📊 기간 집계
               </Text>
             </TouchableOpacity>
+            )}
           </View>
 
           {/* 통계 + 검색 */}
@@ -832,30 +825,26 @@ export default function HistoryScreen() {
                           </Text>
                         </View>
 
-                        {/* 관리 버튼 — 그룹 첫 행에만 표시 */}
+                        {/* 관리 버튼 — 품목(거래 레코드)마다 표시: 여러 품목 입력 건도 개별 수정/삭제 가능 */}
                         <View style={{ flex: 1, flexDirection: 'row', justifyContent: 'flex-end', gap: 6 }}>
-                          {isFirstInGroup && (
-                            <>
-                              <TouchableOpacity
-                                onPress={() => handleEdit(item)}
-                                style={{
-                                  borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 6,
-                                  paddingHorizontal: 10, paddingVertical: 5,
-                                }}
-                              >
-                                <Text style={{ fontSize: 14, color: '#666666' }}>수정</Text>
-                              </TouchableOpacity>
-                              <TouchableOpacity
-                                onPress={() => handleDelete(item.id)}
-                                style={{
-                                  borderWidth: 1, borderColor: '#fdd', borderRadius: 6,
-                                  paddingHorizontal: 10, paddingVertical: 5,
-                                }}
-                              >
-                                <Text style={{ fontSize: 14, color: '#e74c3c' }}>삭제</Text>
-                              </TouchableOpacity>
-                            </>
-                          )}
+                          <TouchableOpacity
+                            onPress={() => handleEdit(item)}
+                            style={{
+                              borderWidth: 1, borderColor: '#e0e0e0', borderRadius: 6,
+                              paddingHorizontal: 10, paddingVertical: 5,
+                            }}
+                          >
+                            <Text style={{ fontSize: 14, color: '#666666' }}>수정</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            onPress={() => handleDelete(item.id)}
+                            style={{
+                              borderWidth: 1, borderColor: '#fdd', borderRadius: 6,
+                              paddingHorizontal: 10, paddingVertical: 5,
+                            }}
+                          >
+                            <Text style={{ fontSize: 14, color: '#e74c3c' }}>삭제</Text>
+                          </TouchableOpacity>
                         </View>
                       </View>
                     );
@@ -865,6 +854,7 @@ export default function HistoryScreen() {
                 })
               )}
             </View>
+          </FadeSwitch>
         </ScrollView>
         <ScrollToTopFab visible={showScrollTop} onPress={handleScrollToTop} />
       </ResponsiveContainer>
