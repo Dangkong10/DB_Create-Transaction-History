@@ -112,10 +112,6 @@ const BASE_STYLES = `
   }
   .empty-slot-inner { text-align: center; color: #ccc; font-size: 11pt; }
 
-  /* ===== 초과 영수증 배치 ===== */
-  .over-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 4mm; }
-  .over-grid-1 { display: grid; grid-template-columns: 1fr; gap: 4mm; max-width: 50%; }
-
   /* ===== 페이지 구분선 ===== */
   .page-divider {
     width: 210mm; text-align: center; padding: 10px 0;
@@ -130,7 +126,6 @@ const BASE_STYLES = `
     .page-divider { width: 100%; }
     .ppm-table th, .ppm-table td { font-size: 9pt; height: 12pt; line-height: 12pt; }
     .receipt-table th, .receipt-table td { font-size: 9pt; height: 13pt; line-height: 13pt; }
-    .over-grid-1 { max-width: 100%; }
   }
 
   /* ===== 프린트 스타일 ===== */

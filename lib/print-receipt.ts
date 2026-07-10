@@ -1,7 +1,11 @@
 /**
  * 영수증 프린트 미리보기
  *
- * A4 한 장에 2x3 그리드 배치 (일반) + 초과 영수증 별도 페이지 배치
+ * A4 한 장에 2x3 그리드(6칸) 배치.
+ * 품목이 많은 영수증은 같은 폭·같은 디자인에서 품목 행만 늘어나
+ * 세로 2~3칸을 차지하고, 일반 페이지 뒤(마지막 페이지)에 모아 배치한다.
+ * 일반 영수증 자투리(마지막 장 잔여분)는 초과 페이지 빈 슬롯에 전부
+ * 들어갈 수 있으면 흡수해 장 수를 아낀다.
  * 수정 가능한 셀 → 프린트
  */
 
@@ -13,11 +17,25 @@ import type { Product } from './types';
 import { resolveSpecialAmount, type SpecialPriceLite } from './unit-price';
 import { getReceiptBalancesForDate, type ReceiptBalances } from './payments';
 
-// 영수증 높이 계산 상수 (pt 단위)
-const ROW_HEIGHT_PT = 17;
-const RECEIPT_HEADER_ROWS = 6; // 제목(1) + 회사명(1) + 상호(1) + 날짜(1) + 열헤더(1) + 총액(1)
-const A4_USABLE_HEIGHT_PT = 780; // 약 267mm
 const COMPANY_NAME = '동방모사';
+
+// 칸(slot) 수별 품목 행 수. 1칸 = 기존 일반 영수증과 동일한 8행.
+// 2·3칸은 헤더(제목/회사/상호/날짜/열헤더/총액)가 한 번만 있으므로
+// 칸이 늘어난 만큼보다 품목 행이 더 들어간다 (행높이 17pt 기준 여유 포함).
+const SPAN_ITEM_ROWS: Record<number, number> = { 1: 8, 2: 20, 3: 32 };
+const SLOTS_PER_PAGE = 6;
+const ROWS_PER_COL = 3;
+
+/** 배치 계산이 끝난 영수증 */
+interface PlacedReceipt {
+  receipt: ReceiptGroup;
+  /** 전잔고 (0이면 표기 안 함) */
+  prev: number;
+  /** 세로로 차지하는 칸 수 (1 = 일반) */
+  span: number;
+  /** 품목 영역 행 수 */
+  maxRows: number;
+}
 
 /**
  * 영수증 미리보기 모달 열기
@@ -46,12 +64,8 @@ export async function openReceiptPreview(
     throw new Error('선택한 조건에 해당하는 거래 내역이 없습니다.');
   }
 
-  // 일반 (≤6) / 초과 (>6) 분리
-  const normal: ReceiptGroup[] = [];
-  const oversized: ReceiptGroup[] = [];
-  receipts.forEach((r) => (r.items.length > 6 ? oversized : normal).push(r));
-
   // 전잔고 조회 (날짜 지정된 경우만). 실패해도 영수증은 정상 출력 (전잔고만 빈 채로).
+  // 전잔고 유무가 필요 행 수(→ 칸 수)에 영향을 주므로 배치 계산 전에 조회한다.
   let balancesByCustomer: Map<string, ReceiptBalances> = new Map();
   if (dateStr) {
     try {
@@ -61,12 +75,24 @@ export async function openReceiptPreview(
     }
   }
 
+  // 필요 행 수(품목 + 전잔고 행) 기준으로 칸 수 계산 → 일반 / 초과 분리
+  const normal: PlacedReceipt[] = [];
+  const oversized: PlacedReceipt[] = [];
+  receipts.forEach((r) => {
+    const prev = receiptPrev(balancesByCustomer.get(r.customerName));
+    const rowsNeeded = r.items.length + (prev > 0 ? 1 : 0);
+    const span = spanForRows(rowsNeeded);
+    const maxRows = Math.max(SPAN_ITEM_ROWS[span], rowsNeeded);
+    const placed: PlacedReceipt = { receipt: r, prev, span, maxRows };
+    (span > 1 ? oversized : normal).push(placed);
+  });
+
   // HTML 생성
-  const contentHtml = buildReceiptHtml(normal, oversized, products, specialPrices, balancesByCustomer);
+  const contentHtml = buildReceiptHtml(normal, oversized, products, specialPrices);
 
   openPrintModal({
     title: titleOverride || `🧾 ${dateStr || '전체'} 영수증 (${receipts.length}건)`,
-    subtitle: `일반 ${normal.length}건 · 초과 ${oversized.length}건 | 셀을 클릭하면 수정 가능`,
+    subtitle: `일반 ${normal.length}건 · 품목초과 ${oversized.length}건 | 셀을 클릭하면 수정 가능`,
     contentHtml,
   });
 }
@@ -91,24 +117,44 @@ function receiptPrev(b: ReceiptBalances | undefined): number {
   return b.previousBalance - b.dailyPayment;
 }
 
+/** 필요 행 수 → 세로 칸 수 (최대 3칸 = 한 페이지의 한 열) */
+function spanForRows(rowsNeeded: number): number {
+  if (rowsNeeded <= SPAN_ITEM_ROWS[1]) return 1;
+  if (rowsNeeded <= SPAN_ITEM_ROWS[2]) return 2;
+  return 3;
+}
+
 function buildReceiptHtml(
-  normal: ReceiptGroup[],
-  oversized: ReceiptGroup[],
+  normal: PlacedReceipt[],
+  oversized: PlacedReceipt[],
   products: Product[],
   specialPrices: SpecialPriceLite[],
-  balancesByCustomer: Map<string, ReceiptBalances>,
 ): string {
+  // 초과 영수증 페이지 배치 (2열 × 3행 칸 단위 패킹)
+  const overPages = packOversized(oversized);
+
+  // 자투리 흡수: 일반 영수증 마지막 장의 잔여분이 초과 페이지 빈 슬롯에
+  // 전부 들어가면 옮겨서 한 장을 아낀다. 일부만 들어가는 경우는 흡수해도
+  // 장 수가 줄지 않으므로 그대로 둔다.
+  const freeSlots = collectFreeSlots(overPages);
+  const leftover = normal.length % SLOTS_PER_PAGE;
+  if (leftover > 0 && leftover <= freeSlots.length) {
+    const absorbed = normal.splice(normal.length - leftover, leftover);
+    absorbed.forEach((p, i) => {
+      const slot = freeSlots[i];
+      slot.page.slots.push({ placed: p, col: slot.col, row: slot.row });
+      slot.page.colsUsed[slot.col - 1] += 1;
+    });
+  }
+
   const parts: string[] = [];
   let pageNum = 0;
+  const totalPages = Math.ceil(normal.length / SLOTS_PER_PAGE) + overPages.length;
 
   // --- 일반 영수증 페이지 (6개씩) ---
-  const totalNormalPages = Math.ceil(normal.length / 6) || 0;
-  const totalOversizedPages = estimateOversizedPages(oversized);
-  const totalPages = totalNormalPages + totalOversizedPages;
-
-  for (let i = 0; i < normal.length; i += 6) {
+  for (let i = 0; i < normal.length; i += SLOTS_PER_PAGE) {
     pageNum++;
-    const pageReceipts = normal.slice(i, i + 6);
+    const pageReceipts = normal.slice(i, i + SLOTS_PER_PAGE);
 
     parts.push(`<div class="page-divider normal">📄 ${pageNum}페이지 — 일반 영수증</div>`);
     // padding 0 으로 A4 가장자리까지 사용, grid 가 페이지 본문을 전부 채워 6칸이 균등 분배되도록.
@@ -116,49 +162,48 @@ function buildReceiptHtml(
     parts.push(`<div class="a4-page full" style="padding:0; min-height:297mm; position:relative;"><span class="a4-label" style="top:2mm; right:3mm;">${pageNum} / ${totalPages}</span>`);
     parts.push('<div class="r-grid" style="height:297mm; grid-template-rows:repeat(3, 1fr); gap:0;">');
 
-    for (let slot = 0; slot < 6; slot++) {
+    for (let slot = 0; slot < SLOTS_PER_PAGE; slot++) {
       if (slot < pageReceipts.length) {
+        const p = pageReceipts[slot];
         parts.push('<div class="r-block" style="padding:2mm; border:0.5px solid #ddd; display:flex; flex-direction:column; overflow:hidden;">');
-        // maxRows: 6 → 8 (사용자 요구로 품목 행 2개 추가). 행 8개여도
-        // 글씨/행높이 기준으로 1/3 페이지 99mm 안에 들어가도록 행 높이 17pt 유지.
-        parts.push(buildSingleReceipt(pageReceipts[slot], products, specialPrices, 8, receiptPrev(balancesByCustomer.get(pageReceipts[slot].customerName))));
+        parts.push(buildSingleReceipt(p.receipt, products, specialPrices, p.maxRows, p.prev));
         parts.push('</div>');
       } else {
-        parts.push('<div class="r-block" style="padding:2mm; border:0.5px solid #ddd; display:flex; flex-direction:column;"><div class="empty-slot" style="flex:1;"><div class="empty-slot-inner">빈 슬롯</div></div></div>');
+        parts.push(emptySlotHtml());
       }
     }
 
     parts.push('</div></div>');
   }
 
-  // --- 초과 영수증 페이지 (높이 기반 패킹) ---
-  if (oversized.length > 0) {
-    const oversizedPages = layoutOversized(oversized);
+  // --- 초과 영수증 페이지 (마지막에 모아 배치, 칸 단위 세로 확장) ---
+  overPages.forEach((page) => {
+    pageNum++;
+    parts.push(`<div class="page-divider over">📄 ${pageNum}페이지 — 품목 초과 영수증</div>`);
+    parts.push(`<div class="a4-page full" style="padding:0; min-height:297mm; position:relative;"><span class="a4-label" style="top:2mm; right:3mm;">${pageNum} / ${totalPages}</span>`);
+    parts.push('<div class="r-grid" style="height:297mm; grid-template-rows:repeat(3, 1fr); gap:0;">');
 
-    oversizedPages.forEach((page) => {
-      pageNum++;
-      parts.push(`<div class="page-divider over">⚠️ ${pageNum}페이지 — 초과 항목 영수증</div>`);
-      parts.push(`<div class="a4-page full"><span class="a4-label">${pageNum} / ${totalPages}</span>`);
-
-      page.forEach((row) => {
-        if (row.length === 2) {
-          parts.push('<div class="over-grid-2" style="margin-bottom:6mm;">');
-          row.forEach((r) => {
-            parts.push(`<div>${buildSingleReceipt(r, products, specialPrices, r.items.length, receiptPrev(balancesByCustomer.get(r.customerName)))}</div>`);
-          });
-          parts.push('</div>');
-        } else {
-          parts.push('<div class="over-grid-1" style="margin-bottom:6mm;">');
-          parts.push(`<div>${buildSingleReceipt(row[0], products, specialPrices, row[0].items.length, receiptPrev(balancesByCustomer.get(row[0].customerName)))}</div>`);
-          parts.push('</div>');
-        }
-      });
-
+    page.slots.forEach(({ placed, col, row }) => {
+      parts.push(`<div class="r-block" style="grid-column:${col}; grid-row:${row} / span ${placed.span}; padding:2mm; border:0.5px solid #ddd; display:flex; flex-direction:column; overflow:hidden;">`);
+      parts.push(buildSingleReceipt(placed.receipt, products, specialPrices, placed.maxRows, placed.prev));
       parts.push('</div>');
     });
-  }
+
+    // 남은 빈 슬롯
+    for (let c = 0; c < 2; c++) {
+      for (let r = page.colsUsed[c]; r < ROWS_PER_COL; r++) {
+        parts.push(emptySlotHtml(`grid-column:${c + 1}; grid-row:${r + 1};`));
+      }
+    }
+
+    parts.push('</div></div>');
+  });
 
   return parts.join('');
+}
+
+function emptySlotHtml(gridStyle: string = ''): string {
+  return `<div class="r-block" style="${gridStyle} padding:2mm; border:0.5px solid #ddd; display:flex; flex-direction:column;"><div class="empty-slot" style="flex:1;"><div class="empty-slot-inner">빈 슬롯</div></div></div>`;
 }
 
 // =================================================================
@@ -195,7 +240,7 @@ function buildSingleReceipt(
           <td contenteditable="true">${itemTotal > 0 ? formatNumber(itemTotal) : ''}</td>
         </tr>`);
     } else {
-      // 빈 행 (일반 영수증: 6행 맞추기)
+      // 빈 행 (행 수 맞추기)
       itemRows.push(`
         <tr class="ri">
           <td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td>
@@ -203,15 +248,21 @@ function buildSingleReceipt(
     }
   }
 
-  // 전잔고 자동 채움: 빈 행이 있을 때만 '공급가 총액' 바로 윗 칸에 표기.
-  // 명세서 §6 — 출력 폼 변형 금지. 6칸 꽉 차면 자동 채움 X.
-  if (previousBalance > 0 && receipt.items.length < maxRows) {
-    itemRows[itemRows.length - 1] = `
+  // 전잔고: 항상 표기 — '공급가 총액' 바로 윗 행.
+  // maxRows 는 배치 단계에서 품목 + 전잔고 행까지 감안해 계산되므로
+  // 마지막 행은 항상 빈 행이지만, 만약을 위해 꽉 찬 경우 행을 추가한다.
+  if (previousBalance > 0) {
+    const prevRow = `
       <tr class="ri">
         <td contenteditable="true" style="text-align:right; font-weight:600; color:#92400e;">전잔고</td>
         <td>&nbsp;</td>
         <td contenteditable="true" style="text-align:right; font-weight:600; color:#92400e;">${formatNumber(previousBalance)}</td>
       </tr>`;
+    if (receipt.items.length < maxRows) {
+      itemRows[itemRows.length - 1] = prevRow;
+    } else {
+      itemRows.push(prevRow);
+    }
     totalPrice += previousBalance;
   }
 
@@ -237,84 +288,58 @@ function buildSingleReceipt(
 }
 
 // =================================================================
-//  초과 영수증 레이아웃 알고리즘
+//  초과 영수증 페이지 배치 (2열 × 3행 칸 단위 패킹)
 // =================================================================
 
-/** 영수증 높이 계산 (pt) */
-function calcReceiptHeight(receipt: ReceiptGroup): number {
-  return (receipt.items.length + RECEIPT_HEADER_ROWS) * ROW_HEIGHT_PT;
+interface OversizedPage {
+  /** 열별 사용된 칸 수 [왼쪽, 오른쪽] */
+  colsUsed: [number, number];
+  slots: { placed: PlacedReceipt; col: number; row: number }[];
 }
 
-/** 초과 영수증 페이지 수 추정 */
-function estimateOversizedPages(oversized: ReceiptGroup[]): number {
-  if (oversized.length === 0) return 0;
-  return layoutOversized(oversized).length;
+interface FreeSlot {
+  page: OversizedPage;
+  col: number;
+  row: number;
 }
 
 /**
- * 초과 영수증 페이지 배치 알고리즘
+ * 초과 영수증을 2열 × 3행(칸) 그리드에 채운다.
  *
- * 1. 품목 수 기준 오름차순 정렬
- * 2. 두 개씩 짝을 지어 나란히(2열) 배치 시도
- * 3. 현재 페이지 남은 높이에 맞으면 배치, 아니면 새 페이지
- * 4. 홀수 개가 남으면 단독(1열) 배치
- *
- * 반환: 페이지[] → 행[] → 영수증[] (1~2개)
+ * 1. 칸 수 내림차순 정렬 (큰 것부터 — first-fit decreasing)
+ * 2. 기존 페이지의 열 중 남은 칸이 충분한 곳에 배치
+ * 3. 없으면 새 페이지
  */
-function layoutOversized(oversized: ReceiptGroup[]): ReceiptGroup[][][] {
-  const sorted = [...oversized].sort((a, b) => a.items.length - b.items.length);
+function packOversized(oversized: PlacedReceipt[]): OversizedPage[] {
+  const sorted = [...oversized].sort((a, b) => b.span - a.span);
+  const pages: OversizedPage[] = [];
 
-  const pages: ReceiptGroup[][][] = [];
-  let currentPage: ReceiptGroup[][] = [];
-  let remainingHeight = A4_USABLE_HEIGHT_PT;
-
-  let i = 0;
-  while (i < sorted.length) {
-    if (i + 1 < sorted.length) {
-      // 두 개씩 짝짓기
-      const a = sorted[i];
-      const b = sorted[i + 1];
-      const pairHeight = Math.max(calcReceiptHeight(a), calcReceiptHeight(b));
-
-      if (pairHeight <= remainingHeight) {
-        currentPage.push([a, b]);
-        remainingHeight -= pairHeight + 20; // 간격 여유
-        i += 2;
-      } else if (currentPage.length === 0) {
-        // 빈 페이지에도 안 들어가면 그냥 넣기
-        currentPage.push([a, b]);
-        pages.push(currentPage);
-        currentPage = [];
-        remainingHeight = A4_USABLE_HEIGHT_PT;
-        i += 2;
-      } else {
-        // 새 페이지
-        pages.push(currentPage);
-        currentPage = [];
-        remainingHeight = A4_USABLE_HEIGHT_PT;
+  sorted.forEach((p) => {
+    const span = Math.min(p.span, ROWS_PER_COL);
+    for (const page of pages) {
+      for (let c = 0; c < 2; c++) {
+        if (ROWS_PER_COL - page.colsUsed[c] >= span) {
+          page.slots.push({ placed: p, col: c + 1, row: page.colsUsed[c] + 1 });
+          page.colsUsed[c] += span;
+          return;
+        }
       }
-    } else {
-      // 홀수: 단독 배치
-      const single = sorted[i];
-      const h = calcReceiptHeight(single);
-
-      if (h <= remainingHeight) {
-        currentPage.push([single]);
-        remainingHeight -= h + 20;
-      } else if (currentPage.length === 0) {
-        currentPage.push([single]);
-        pages.push(currentPage);
-        currentPage = [];
-        remainingHeight = A4_USABLE_HEIGHT_PT;
-      } else {
-        pages.push(currentPage);
-        currentPage = [[single]];
-        remainingHeight = A4_USABLE_HEIGHT_PT - h - 20;
-      }
-      i++;
     }
-  }
+    pages.push({ colsUsed: [span, 0], slots: [{ placed: p, col: 1, row: 1 }] });
+  });
 
-  if (currentPage.length > 0) pages.push(currentPage);
   return pages;
+}
+
+/** 초과 페이지들의 빈 슬롯 목록 (페이지 → 열 → 행 순서) */
+function collectFreeSlots(pages: OversizedPage[]): FreeSlot[] {
+  const free: FreeSlot[] = [];
+  pages.forEach((page) => {
+    for (let c = 0; c < 2; c++) {
+      for (let r = page.colsUsed[c]; r < ROWS_PER_COL; r++) {
+        free.push({ page, col: c + 1, row: r + 1 });
+      }
+    }
+  });
+  return free;
 }
