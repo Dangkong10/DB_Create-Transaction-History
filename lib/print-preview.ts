@@ -130,6 +130,9 @@ const BASE_STYLES = `
 
   /* ===== 프린트 스타일 ===== */
   @media print {
+    /* 인쇄 여백을 명시해 프린터 인쇄 가능 영역을 확보한다.
+       (미지정 시 프린터 기본 여백 탓에 영수증 그리드 하단이 잘렸음) */
+    @page { size: A4; margin: 8mm; }
     body > *:not(#${MODAL_ID}) { display: none !important; }
     #${MODAL_ID} { position: static; background: none; }
     .ppm-toolbar, .ppm-info { display: none !important; }
@@ -143,6 +146,11 @@ const BASE_STYLES = `
       min-height: 0 !important; /* 콘텐츠 길이에 맞춰 자연스럽게 페이지 분할 */
     }
     .a4-page:last-child { page-break-after: avoid; }
+    /* 영수증 그리드: 인라인 height:297mm(=A4 전체) 그대로 두면 상·하 여백만큼
+       인쇄 영역을 넘쳐 맨 아랫줄(공급가 총액)이 잘린다. @page 여백(상하 16mm)을
+       감안해 인쇄 영역 높이(297-16=281mm)로 줄여 마지막 줄까지 들어오게 한다. */
+    .a4-page.full { height: auto !important; }
+    .a4-page.full .r-grid { height: 281mm !important; }
     .page-divider { display: none !important; }
     [contenteditable] {
       background: transparent !important;
