@@ -24,7 +24,7 @@ import { searchCustomers } from "@/lib/search-utils";
 import { matchChosung } from "@/lib/hangul-utils";
 import { aggregateTransactions, groupByReceipt, filterByDate, type ReceiptGroup } from "@/lib/excel-utils";
 import { getPendingCustomers } from "@/lib/payments";
-import { createUnitPriceResolver, safeGetSpecialPrices, type SpecialPriceLite } from "@/lib/unit-price";
+import { safeGetSpecialPrices, type SpecialPriceLite } from "@/lib/unit-price";
 import { MonthlyCalendar } from "@/components/monthly-calendar";
 import { toLocalDateStr } from "@/lib/date-range-utils";
 import { useRouter } from "expo-router";
@@ -167,20 +167,11 @@ export default function ReceiptScreen() {
     return filterByDate(grouped, selectedDate);
   }, [selectedDate, transactions]);
 
-  // 단가 조회 헬퍼 (거래처별 특가 우선, 없으면 제품 기본 단가)
-  const getUnitPrice = useMemo(
-    () => createUnitPriceResolver(products, specialPrices),
-    [products, specialPrices],
-  );
-
   // 거래처별 통계 (품목 수, 총액)
+  // 금액은 거래 시점 박제 단가(item.amount) — 영수증·집계표·잔고와 동일 출처.
   const customerStats = useMemo(() => {
     return dateReceipts.map((r) => {
-      let total = 0;
-      r.items.forEach((item) => {
-        const price = getUnitPrice(r.customerName, item.productName);
-        total += price * item.quantity;
-      });
+      const total = r.items.reduce((sum, item) => sum + (item.amount > 0 ? item.amount : 0), 0);
       return {
         customerName: r.customerName,
         itemCount: r.items.length,
@@ -189,7 +180,7 @@ export default function ReceiptScreen() {
         receipt: r,
       };
     });
-  }, [dateReceipts, getUnitPrice]);
+  }, [dateReceipts]);
 
   // 전체 기간 거래처 수 (날짜 미선택 시 표시용)
   const allCustomerCount = useMemo(() => {

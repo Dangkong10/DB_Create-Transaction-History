@@ -18,6 +18,8 @@ export interface AggregatedTransaction {
   customerName: string;
   productName: string;
   totalQuantity: number;
+  /** 거래 시점 단가로 박제된 금액 합계 = Σ(수량 × unitPrice). legacy(단가 없음)는 0. */
+  totalAmount: number;
 }
 
 export interface ReceiptGroup {
@@ -26,6 +28,8 @@ export interface ReceiptGroup {
   items: {
     productName: string;
     quantity: number;
+    /** 거래 시점 박제 공급대가 = Σ(수량 × unitPrice). 잔고·집계표와 동일 출처. */
+    amount: number;
   }[];
 }
 
@@ -41,15 +45,18 @@ export function aggregateTransactions(
     const date = transaction.date;
     const key = `${date}|${transaction.customerName}|${transaction.productName}`;
 
+    const lineAmount = (transaction.unitPrice ?? 0) * transaction.quantity;
     if (grouped.has(key)) {
       const existing = grouped.get(key)!;
       existing.totalQuantity += transaction.quantity;
+      existing.totalAmount += lineAmount;
     } else {
       grouped.set(key, {
         date,
         customerName: transaction.customerName,
         productName: transaction.productName,
         totalQuantity: transaction.quantity,
+        totalAmount: lineAmount,
       });
     }
   }
@@ -79,6 +86,7 @@ export function groupByReceipt(
       grouped.get(key)!.items.push({
         productName: item.productName,
         quantity: item.totalQuantity,
+        amount: item.totalAmount,
       });
     } else {
       grouped.set(key, {
@@ -88,6 +96,7 @@ export function groupByReceipt(
           {
             productName: item.productName,
             quantity: item.totalQuantity,
+            amount: item.totalAmount,
           },
         ],
       });

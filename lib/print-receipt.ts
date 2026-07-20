@@ -11,10 +11,7 @@
 
 import { openPrintModal, formatDateWithDay, formatNumber } from './print-preview';
 import { aggregateTransactions, groupByReceipt, filterByDate, type ReceiptGroup } from './excel-utils';
-import { loadProducts } from './storage';
 import type { Transaction } from './excel-utils';
-import type { Product } from './types';
-import { resolveSpecialAmount, type SpecialPriceLite } from './unit-price';
 import { getReceiptBalancesForDate, type ReceiptBalances } from './payments';
 
 const COMPANY_NAME = '동방모사';
@@ -45,17 +42,7 @@ export async function openReceiptPreview(
   dateStr: string,
   titleOverride?: string,
 ): Promise<void> {
-  // 제품 목록 (단가 매칭용)
-  const products = await loadProducts();
-
-  // 특가 목록
-  let specialPrices: SpecialPriceLite[] = [];
-  try {
-    const { getSpecialPrices } = await import('./supabase');
-    specialPrices = await getSpecialPrices();
-  } catch { /* 특가 없이 진행 */ }
-
-  // 집계 & 그룹핑
+  // 집계 & 그룹핑 (금액은 거래 시점 박제 단가로 excel-utils 에서 실려 온다)
   const aggregated = aggregateTransactions(transactions as Transaction[]);
   let receipts = groupByReceipt(aggregated);
   if (dateStr) receipts = filterByDate(receipts, dateStr);
@@ -88,7 +75,7 @@ export async function openReceiptPreview(
   });
 
   // HTML 생성
-  const contentHtml = buildReceiptHtml(normal, oversized, products, specialPrices);
+  const contentHtml = buildReceiptHtml(normal, oversized);
 
   openPrintModal({
     title: titleOverride || `🧾 ${dateStr || '전체'} 영수증 (${receipts.length}건)`,
@@ -127,8 +114,6 @@ function spanForRows(rowsNeeded: number): number {
 function buildReceiptHtml(
   normal: PlacedReceipt[],
   oversized: PlacedReceipt[],
-  products: Product[],
-  specialPrices: SpecialPriceLite[],
 ): string {
   // 초과 영수증 페이지 배치 (2열 × 3행 칸 단위 패킹)
   const overPages = packOversized(oversized);
@@ -166,7 +151,7 @@ function buildReceiptHtml(
       if (slot < pageReceipts.length) {
         const p = pageReceipts[slot];
         parts.push('<div class="r-block" style="padding:2mm; border:0.5px solid #ddd; display:flex; flex-direction:column; overflow:hidden;">');
-        parts.push(buildSingleReceipt(p.receipt, products, specialPrices, p.maxRows, p.prev));
+        parts.push(buildSingleReceipt(p.receipt, p.maxRows, p.prev));
         parts.push('</div>');
       } else {
         parts.push(emptySlotHtml());
@@ -185,7 +170,7 @@ function buildReceiptHtml(
 
     page.slots.forEach(({ placed, col, row }) => {
       parts.push(`<div class="r-block" style="grid-column:${col}; grid-row:${row} / span ${placed.span}; padding:2mm; border:0.5px solid #ddd; display:flex; flex-direction:column; overflow:hidden;">`);
-      parts.push(buildSingleReceipt(placed.receipt, products, specialPrices, placed.maxRows, placed.prev));
+      parts.push(buildSingleReceipt(placed.receipt, placed.maxRows, placed.prev));
       parts.push('</div>');
     });
 
@@ -212,8 +197,6 @@ function emptySlotHtml(gridStyle: string = ''): string {
 
 function buildSingleReceipt(
   receipt: ReceiptGroup,
-  products: Product[],
-  specialPrices: SpecialPriceLite[],
   maxRows: number,
   previousBalance: number = 0,
 ): string {
@@ -225,12 +208,8 @@ function buildSingleReceipt(
   for (let i = 0; i < maxRows; i++) {
     const item = receipt.items[i];
     if (item) {
-      const sp = specialPrices.find(
-        (s) => s.customerName === receipt.customerName && s.productName === item.productName,
-      );
-      const prod = products.find((p) => p.name === item.productName);
-      const unitPrice = sp ? resolveSpecialAmount(sp, prod?.unitPrice) : prod?.unitPrice;
-      const itemTotal = unitPrice && unitPrice > 0 ? unitPrice * item.quantity : 0;
+      // 거래 시점 박제 금액 사용 — 잔고·집계표와 동일 출처라 사후 단가 변경에도 불일치 없음
+      const itemTotal = item.amount > 0 ? item.amount : 0;
       totalPrice += itemTotal;
 
       itemRows.push(`
