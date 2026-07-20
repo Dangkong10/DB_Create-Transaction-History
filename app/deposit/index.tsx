@@ -24,6 +24,7 @@ import { Stack, useRouter } from 'expo-router';
 import { ScreenContainer } from '@/components/screen-container';
 import { ResponsiveContainer } from '@/components/responsive-container';
 import { useToast } from '@/lib/toast-provider';
+import { blurActive } from '@/lib/utils';
 import { useConfirm } from '@/lib/confirm-provider';
 import {
   getPendingCustomersAsOfDate,
@@ -199,6 +200,7 @@ export default function DepositInputScreen() {
         setSaving(true);
         await savePayments(items);
         showToast(`${items.length}건 저장되었습니다.`, 'success');
+        blurActive();
         router.back();
       } catch (err: any) {
         console.error('[DepositInputScreen] save error:', err);
@@ -258,7 +260,7 @@ export default function DepositInputScreen() {
             }}
           >
             <TouchableOpacity
-              onPress={() => router.back()}
+              onPress={() => { blurActive(); router.back(); }}
               style={{
                 width: 36,
                 height: 36,
@@ -275,7 +277,7 @@ export default function DepositInputScreen() {
               입금 입력
             </Text>
             <TouchableOpacity
-              onPress={() => router.push('/deposit/history')}
+              onPress={() => { blurActive(); router.push('/deposit/history'); }}
               style={{
                 paddingHorizontal: 12,
                 paddingVertical: 8,

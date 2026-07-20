@@ -23,6 +23,7 @@ import { Stack, useRouter } from 'expo-router';
 import { ScreenContainer } from '@/components/screen-container';
 import { ResponsiveContainer } from '@/components/responsive-container';
 import { useToast } from '@/lib/toast-provider';
+import { blurActive } from '@/lib/utils';
 import { useConfirm } from '@/lib/confirm-provider';
 import {
   getAllPayments,
@@ -572,7 +573,7 @@ export default function DepositHistoryScreen() {
             }}
           >
             <TouchableOpacity
-              onPress={() => router.back()}
+              onPress={() => { blurActive(); router.back(); }}
               style={{
                 width: 36,
                 height: 36,

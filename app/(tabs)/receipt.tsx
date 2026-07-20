@@ -17,6 +17,7 @@ import { ScreenContainer } from "@/components/screen-container";
 import { ResponsiveContainer } from "@/components/responsive-container";
 import { ScrollToTopFab } from "@/components/scroll-to-top-fab";
 import { useToast } from "@/lib/toast-provider";
+import { blurActive } from "@/lib/utils";
 import { type Transaction } from "@/lib/supabase";
 import { pullFromServer, getLocalTransactions } from "@/lib/sync-manager";
 import { loadProducts, loadCustomers } from "@/lib/storage";
@@ -68,6 +69,7 @@ export default function ReceiptScreen() {
 
   /** [입금 입력] 카드 클릭 — /deposit 전체화면으로 이동 */
   const handleDepositInputClick = () => {
+    blurActive(); // 화면 전환 시 aria-hidden 포커스 경고 방지
     router.push('/deposit');
   };
 
