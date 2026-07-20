@@ -348,12 +348,24 @@ export async function pullFromServer(): Promise<Transaction[]> {
   const session = await getSession();
   if (!session) throw new Error('로그인이 필요합니다.');
 
-  const { data, error } = await supabase
-    .from('transactions')
-    .select('*')
-    .order('created_at', { ascending: false });
-
-  if (error) throw error;
+  // Supabase REST 기본 페이지 크기(1000) 한계를 반드시 우회한다.
+  // 1000건 초과분이 누락된 채로 아래 "서버에 없는 synced → 로컬 삭제" 로직이
+  // 돌면, 서버엔 멀쩡히 있는 오래된 거래가 로컬에서 통째로 삭제된다.
+  // (getReceiptBalancesForDate 의 fetchAllRows 와 동일한 이유)
+  const PAGE = 1000;
+  const data: any[] = [];
+  for (let i = 0; i < 100; i++) {
+    const from = i * PAGE;
+    const { data: page, error } = await supabase
+      .from('transactions')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .range(from, from + PAGE - 1);
+    if (error) throw error;
+    if (!page || page.length === 0) break;
+    data.push(...page);
+    if (page.length < PAGE) break; // 마지막 페이지
+  }
 
   // 서버 데이터를 로컬에 병합 (last-write-wins)
   for (const row of data) {

@@ -15,3 +15,19 @@ MonthlyCalendar에서 해당 월에 거래가 존재하는 날짜 아래 점(·)
 ### 3. 기간 집계 기능을 기간 모드에 통합 (검토 후 폐기)
 집계 카드·거래처 체크박스·내보내기를 내역 화면 기간 모드 안으로 흡수하는 안.
 - 폐기 사유(2026-07-09): 목업 v2·v3 검토 결과 기존 팝업 형태 유지가 낫다고 결정. 기록만 남김.
+
+## 2026-07-20 — "숫자 틀림" 수정 중 발견한 동기화 위험 (위험 2, 보류)
+
+### 4. pullFromServer ↔ processSyncQueue 상호배제 없음 (중간 심각도)
+`isSyncing` 락(sync-manager.ts:23,186)은 processSyncQueue 재진입만 막고, pullFromServer는
+락을 보지도 걸지도 않음. 화면 포커스마다 pullFromServer가 도는데(receipt.tsx:129,155,
+history.tsx:146) 큐 처리와 겹치면: pull이 서버 목록을 t0에 읽음 → 그 사이 큐가 거래 T를
+INSERT하고 로컬 T를 synced 승격 → pull이 삭제 단계(sync-manager.ts:428~433)에서 "t0
+목록에 T 없음"으로 판정해 막 동기화된 T를 삭제. 다음 pull에서 복구되나, history의 큐 우회
+직접 삭제/수정(history.tsx:214,237 → supabase 직접)과 겹치면 꼬임이 커질 수 있음.
+추가로 `local-{id}` 형태 id가 `Number()`에서 NaN이 되는 문제도 있음.
+- 보류 사유(2026-07-20): 위험 1(1000건 초과 로컬 삭제)만 먼저 수정하기로 결정.
+  이 건은 대개 자가 치유돼 위험 1보다 우선순위 낮음.
+- 수정 방향 후보: pullFromServer도 isSyncing 락으로 감싸 큐 처리와 상호배제, 또는
+  삭제 판정을 "서버 목록에 없음 + updatedAt 기준 stale" 로 강화. history 직접 삭제/수정도
+  offline-db 큐 경유로 통일 검토.
