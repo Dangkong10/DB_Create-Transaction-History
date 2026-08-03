@@ -486,13 +486,29 @@ export default function DepositHistoryScreen() {
     );
   }, [adjustments, query]);
 
+  /**
+   * 합계는 **올해 기준**.
+   * 전체 누적 합계는 해가 바뀌어도 계속 쌓여 실무에서 읽기 어렵다.
+   * 목록은 전부 보여주되, 합계만 올해로 끊는다 (라벨에 연도를 명시).
+   */
+  const thisYear = useMemo(() => String(new Date().getFullYear()), []);
+
+  const paymentsThisYear = useMemo(
+    () => filteredPayments.filter((p) => p.paymentDate.startsWith(thisYear)),
+    [filteredPayments, thisYear],
+  );
+  const adjustmentsThisYear = useMemo(
+    () => filteredAdjustments.filter((a) => a.adjustmentDate.startsWith(thisYear)),
+    [filteredAdjustments, thisYear],
+  );
+
   const paymentTotal = useMemo(
-    () => filteredPayments.reduce((s, p) => s + p.amount, 0),
-    [filteredPayments],
+    () => paymentsThisYear.reduce((s, p) => s + p.amount, 0),
+    [paymentsThisYear],
   );
   const adjustmentTotal = useMemo(
-    () => filteredAdjustments.reduce((s, a) => s + a.amount, 0),
-    [filteredAdjustments],
+    () => adjustmentsThisYear.reduce((s, a) => s + a.amount, 0),
+    [adjustmentsThisYear],
   );
 
   const handleDeletePayment = useCallback(
@@ -555,6 +571,9 @@ export default function DepositHistoryScreen() {
     tab === 'payment' ? filteredPayments.length : filteredAdjustments.length;
   const totalCount = tab === 'payment' ? payments.length : adjustments.length;
   const currentTotal = tab === 'payment' ? paymentTotal : adjustmentTotal;
+  // 합계가 올해 기준이므로, 그 합계가 몇 건에 대한 것인지 함께 보여준다.
+  const currentYearCount =
+    tab === 'payment' ? paymentsThisYear.length : adjustmentsThisYear.length;
 
   return (
     <ScreenContainer style={{ backgroundColor: '#f5f5f5' }}>
@@ -669,7 +688,8 @@ export default function DepositHistoryScreen() {
                   ...(Platform.OS === 'web' ? ({ fontFamily: 'monospace' } as any) : {}),
                 }}
               >
-                합계 {tab === 'payment' ? formatNumber(currentTotal) : formatSigned(currentTotal)}원
+                {thisYear}년 합계 {tab === 'payment' ? formatNumber(currentTotal) : formatSigned(currentTotal)}원
+                {currentYearCount > 0 ? ` (${currentYearCount}건)` : ''}
               </Text>
             </View>
           </View>

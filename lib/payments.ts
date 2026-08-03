@@ -108,68 +108,22 @@ async function fetchAllRows<T>(
  *          음수 balance (선입금) 도 포함 — Q1 정책에 따라 허용.
  */
 export async function getAllOutstandings(): Promise<Map<string, number>> {
-  const userId = await getUserIdOrThrow();
+  // user_id 필터는 RPC 내부에서 auth.uid() 로 강제된다 (SECURITY INVOKER + RLS).
+  // 여기서는 로그인 여부만 미리 확인해 에러 메시지를 일관되게 유지한다.
+  await getUserIdOrThrow();
 
-  // 매출 총합 (거래처별) — 1000건 한계 우회 위해 페이지네이션
-  let txRows: { customer_name: string; quantity: number | null; unit_price: number | null }[];
-  try {
-    txRows = await fetchAllRows<{ customer_name: string; quantity: number | null; unit_price: number | null }>((from, to) =>
-      supabase
-        .from('transactions')
-        .select('customer_name, quantity, unit_price')
-        .eq('user_id', userId)
-        .range(from, to),
-    );
-  } catch (txErr: any) {
-    console.error('[getAllOutstandings] tx error:', txErr);
-    throw new Error(`매출 조회 실패: ${txErr.message ?? txErr}`);
-  }
+  const { data, error } = await supabase.rpc('outstanding_balances');
 
-  // 입금 총합 (거래처별)
-  let payRows: { customer_name: string; amount: number }[];
-  try {
-    payRows = await fetchAllRows<{ customer_name: string; amount: number }>((from, to) =>
-      supabase
-        .from('payments')
-        .select('customer_name, amount')
-        .eq('user_id', userId)
-        .range(from, to),
-    );
-  } catch (payErr: any) {
-    console.error('[getAllOutstandings] pay error:', payErr);
-    throw new Error(`입금 조회 실패: ${payErr.message ?? payErr}`);
-  }
-
-  // 조정 총합 (거래처별). 테이블 미적용 환경에서도 0으로 fallback.
-  let adjRows: { customer_name: string; amount: number }[] = [];
-  try {
-    adjRows = await fetchAllRows<{ customer_name: string; amount: number }>((from, to) =>
-      supabase
-        .from('adjustments')
-        .select('customer_name, amount')
-        .eq('user_id', userId)
-        .range(from, to),
-    );
-  } catch (err: any) {
-    console.warn('[getAllOutstandings] adjustments fetch 실패 (0으로 처리):', err.message ?? err);
+  if (error) {
+    console.error('[getAllOutstandings] Error:', error);
+    throw new Error(`미수금 조회 실패: ${error.message}`);
   }
 
   const map = new Map<string, number>();
-
-  for (const r of txRows ?? []) {
-    const amount = (r.quantity ?? 0) * (r.unit_price ?? 0);
-    map.set(r.customer_name, (map.get(r.customer_name) ?? 0) + amount);
-  }
-  for (const r of payRows ?? []) {
-    map.set(r.customer_name, (map.get(r.customer_name) ?? 0) - (r.amount ?? 0));
-  }
-  for (const r of adjRows) {
-    map.set(r.customer_name, (map.get(r.customer_name) ?? 0) + (r.amount ?? 0));
-  }
-
-  // 0인 거래처 제거 (현재 미수금 0 = 정산 완료, 화면에 보일 필요 X)
-  for (const [name, bal] of Array.from(map.entries())) {
-    if (bal === 0) map.delete(name);
+  for (const r of (data ?? []) as { customer_name: string; balance: number | string }[]) {
+    const bal = Number(r.balance);
+    // 0인 거래처 제거 (현재 미수금 0 = 정산 완료, 화면에 보일 필요 X)
+    if (bal !== 0) map.set(r.customer_name, bal);
   }
 
   return map;
@@ -200,103 +154,35 @@ export async function getCurrentOutstanding(customerName: string): Promise<numbe
 export async function getReceiptBalancesForDate(
   date: string,
 ): Promise<Map<string, ReceiptBalances>> {
-  const userId = await getUserIdOrThrow();
+  await getUserIdOrThrow();
 
-  // 매출 — 전체 (전잔고 계산 위해 < D 필요, 당일매출 위해 = D 필요). 1000건 한계 우회.
-  let txRows: { customer_name: string; quantity: number | null; unit_price: number | null; date: string }[];
-  try {
-    txRows = await fetchAllRows((from, to) =>
-      supabase
-        .from('transactions')
-        .select('customer_name, quantity, unit_price, date')
-        .eq('user_id', userId)
-        .lte('date', date)
-        .range(from, to),
-    );
-  } catch (txErr: any) {
-    console.error('[getReceiptBalancesForDate] tx error:', txErr);
-    throw new Error(`매출 조회 실패: ${txErr.message ?? txErr}`);
+  const { data, error } = await supabase.rpc('receipt_balances_for_date', { p_date: date });
+
+  if (error) {
+    console.error('[getReceiptBalancesForDate] Error:', error);
+    throw new Error(`잔고 조회 실패: ${error.message}`);
   }
 
-  // 입금 — 입금일 ≤ D
-  let payRows: { customer_name: string; amount: number; payment_date: string }[];
-  try {
-    payRows = await fetchAllRows((from, to) =>
-      supabase
-        .from('payments')
-        .select('customer_name, amount, payment_date')
-        .eq('user_id', userId)
-        .lte('payment_date', date)
-        .range(from, to),
-    );
-  } catch (payErr: any) {
-    console.error('[getReceiptBalancesForDate] pay error:', payErr);
-    throw new Error(`입금 조회 실패: ${payErr.message ?? payErr}`);
-  }
+  const rows = (data ?? []) as {
+    customer_name: string;
+    previous_balance: number | string;
+    daily_revenue: number | string;
+    daily_payment: number | string;
+  }[];
 
-  // 조정 — 조정일 ≤ D (테이블 미적용 환경에서도 안전)
-  let adjRows: { customer_name: string; amount: number; adjustment_date: string }[] = [];
-  try {
-    adjRows = await fetchAllRows((from, to) =>
-      supabase
-        .from('adjustments')
-        .select('customer_name, amount, adjustment_date')
-        .eq('user_id', userId)
-        .lte('adjustment_date', date)
-        .range(from, to),
-    );
-  } catch (err: any) {
-    console.warn('[getReceiptBalancesForDate] adjustments fetch 실패 (0으로 처리):', err.message ?? err);
-  }
-
-  // 거래처별로 prev / daily 누적
   const result = new Map<string, ReceiptBalances>();
-  const getOrInit = (name: string): ReceiptBalances => {
-    let r = result.get(name);
-    if (!r) {
-      r = {
-        customerName: name,
-        previousBalance: 0,
-        dailyRevenue: 0,
-        dailyPayment: 0,
-        total: 0,
-      };
-      result.set(name, r);
-    }
-    return r;
-  };
-
-  // 매출: < D 는 prev, = D 는 dailyRevenue
-  for (const r of txRows ?? []) {
-    const amount = (r.quantity ?? 0) * (r.unit_price ?? 0);
-    const entry = getOrInit(r.customer_name);
-    if (r.date < date) {
-      entry.previousBalance += amount;
-    } else if (r.date === date) {
-      entry.dailyRevenue += amount;
-    }
-  }
-
-  // 입금: < D 는 prev 에서 차감, = D 는 dailyPayment 별도 누적
-  for (const r of payRows ?? []) {
-    const entry = getOrInit(r.customer_name);
-    const amt = r.amount ?? 0;
-    if (r.payment_date < date) {
-      entry.previousBalance -= amt;
-    } else if (r.payment_date === date) {
-      entry.dailyPayment += amt;
-    }
-  }
-
-  // 조정: ≤ D 전부 prev 에 흡수 (당일 조정 포함, 즉시 누적)
-  for (const r of adjRows) {
-    const entry = getOrInit(r.customer_name);
-    entry.previousBalance += r.amount ?? 0;
-  }
-
-  // 총잔액 = 전잔고 + 당일매출 − 당일입금
-  for (const entry of result.values()) {
-    entry.total = entry.previousBalance + entry.dailyRevenue - entry.dailyPayment;
+  for (const r of rows) {
+    const previousBalance = Number(r.previous_balance);
+    const dailyRevenue = Number(r.daily_revenue);
+    const dailyPayment = Number(r.daily_payment);
+    result.set(r.customer_name, {
+      customerName: r.customer_name,
+      previousBalance,
+      dailyRevenue,
+      dailyPayment,
+      // 총잔액 = 전잔고 + 당일매출 − 당일입금 (기존과 동일하게 클라이언트에서 계산)
+      total: previousBalance + dailyRevenue - dailyPayment,
+    });
   }
 
   return result;
@@ -373,69 +259,20 @@ export async function getPendingCustomersAsOfDate(
     throw new Error(`날짜 형식 오류 (YYYY-MM-DD): ${date}`);
   }
 
-  const userId = await getUserIdOrThrow();
+  await getUserIdOrThrow();
 
-  // 1000건 한계 우회 위해 페이지네이션
-  let txRows: { customer_name: string; quantity: number | null; unit_price: number | null }[];
-  try {
-    txRows = await fetchAllRows((from, to) =>
-      supabase
-        .from('transactions')
-        .select('customer_name, quantity, unit_price')
-        .eq('user_id', userId)
-        .lte('date', date)
-        .range(from, to),
-    );
-  } catch (txErr: any) {
-    throw new Error(`매출 조회 실패: ${txErr.message ?? txErr}`);
+  const { data, error } = await supabase.rpc('outstanding_balances_as_of', { p_date: date });
+
+  if (error) {
+    console.error('[getPendingCustomersAsOfDate] Error:', error);
+    throw new Error(`미수금 조회 실패: ${error.message}`);
   }
 
-  let payRows: { customer_name: string; amount: number }[];
-  try {
-    payRows = await fetchAllRows((from, to) =>
-      supabase
-        .from('payments')
-        .select('customer_name, amount')
-        .eq('user_id', userId)
-        .lte('payment_date', date)
-        .range(from, to),
-    );
-  } catch (payErr: any) {
-    throw new Error(`입금 조회 실패: ${payErr.message ?? payErr}`);
-  }
-
-  let adjRows: { customer_name: string; amount: number }[] = [];
-  try {
-    adjRows = await fetchAllRows((from, to) =>
-      supabase
-        .from('adjustments')
-        .select('customer_name, amount')
-        .eq('user_id', userId)
-        .lte('adjustment_date', date)
-        .range(from, to),
-    );
-  } catch (err: any) {
-    console.warn(
-      '[getPendingCustomersAsOfDate] adjustments fetch 실패 (0으로 처리):',
-      err.message ?? err,
-    );
-  }
-
-  const map = new Map<string, number>();
-  for (const r of txRows ?? []) {
-    const amount = (r.quantity ?? 0) * (r.unit_price ?? 0);
-    map.set(r.customer_name, (map.get(r.customer_name) ?? 0) + amount);
-  }
-  for (const r of payRows ?? []) {
-    map.set(r.customer_name, (map.get(r.customer_name) ?? 0) - (r.amount ?? 0));
-  }
-  for (const r of adjRows) {
-    map.set(r.customer_name, (map.get(r.customer_name) ?? 0) + (r.amount ?? 0));
-  }
-
+  // 양수 미수금만 (음수 = 선입금 상태는 이 화면에 안 보임) + 가나다순 — 기존 정책 유지
   const rows: PendingCustomerRow[] = [];
-  for (const [name, balance] of map) {
-    if (balance > 0) rows.push({ customerName: name, outstanding: balance });
+  for (const r of (data ?? []) as { customer_name: string; balance: number | string }[]) {
+    const balance = Number(r.balance);
+    if (balance > 0) rows.push({ customerName: r.customer_name, outstanding: balance });
   }
   rows.sort((a, b) => a.customerName.localeCompare(b.customerName, 'ko-KR'));
   return rows;
@@ -571,19 +408,24 @@ function rowToAdjustment(row: any): Adjustment {
 export async function getAllAdjustments(): Promise<Adjustment[]> {
   const userId = await getUserIdOrThrow();
 
-  const { data, error } = await supabase
-    .from('adjustments')
-    .select('*')
-    .eq('user_id', userId)
-    .order('adjustment_date', { ascending: false })
-    .order('created_at', { ascending: false });
-
-  if (error) {
-    console.error('[getAllAdjustments] Error:', error);
-    throw new Error(`조정 내역 조회 실패: ${error.message}`);
+  // getAllPayments 와 동일 — range 없이 조회하면 1000건에서 잘린다.
+  let rows: any[];
+  try {
+    rows = await fetchAllRows<any>((from, to) =>
+      supabase
+        .from('adjustments')
+        .select('*')
+        .eq('user_id', userId)
+        .order('adjustment_date', { ascending: false })
+        .order('created_at', { ascending: false })
+        .range(from, to),
+    );
+  } catch (err: any) {
+    console.error('[getAllAdjustments] Error:', err);
+    throw new Error(`조정 내역 조회 실패: ${err.message ?? err}`);
   }
 
-  return (data ?? []).map(rowToAdjustment);
+  return rows.map(rowToAdjustment);
 }
 
 /**
@@ -699,19 +541,25 @@ export async function saveAdjustment(item: AdjustmentInput): Promise<void> {
 export async function getAllPayments(): Promise<Payment[]> {
   const userId = await getUserIdOrThrow();
 
-  const { data, error } = await supabase
-    .from('payments')
-    .select('*')
-    .eq('user_id', userId)
-    .order('payment_date', { ascending: false })
-    .order('created_at', { ascending: false });
-
-  if (error) {
-    console.error('[getAllPayments] Error:', error);
-    throw new Error(`입금 기록 조회 실패: ${error.message}`);
+  // Supabase REST 는 range 를 안 주면 1000건만 반환한다.
+  // 페이지네이션이 없으면 보관함이 1000건에서 조용히 잘리고, 화면 합계도 잘린 합이 된다.
+  let rows: any[];
+  try {
+    rows = await fetchAllRows<any>((from, to) =>
+      supabase
+        .from('payments')
+        .select('*')
+        .eq('user_id', userId)
+        .order('payment_date', { ascending: false })
+        .order('created_at', { ascending: false })
+        .range(from, to),
+    );
+  } catch (err: any) {
+    console.error('[getAllPayments] Error:', err);
+    throw new Error(`입금 기록 조회 실패: ${err.message ?? err}`);
   }
 
-  return (data ?? []).map(rowToPayment);
+  return rows.map(rowToPayment);
 }
 
 /**

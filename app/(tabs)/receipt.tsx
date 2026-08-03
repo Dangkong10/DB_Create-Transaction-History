@@ -204,14 +204,36 @@ export default function ReceiptScreen() {
     });
   }, [customerQuery, customerStats, customers]);
 
+  /**
+   * 출력용 거래 로드 — 서버 우선, 실패 시 로컬 캐시 fallback.
+   *
+   * 잔고(RPC)와 **같은 서버·같은 시점**의 거래를 써야 영수증 숫자가 어긋나지 않는다.
+   * 화면 표시는 로컬 캐시로 빠르게 하되, 인쇄물만큼은 서버 기준으로 맞춘다.
+   *
+   * ⚠️ 서버 조회가 실패해도 **출력을 막지 않는다.** 창고에서 인터넷이 끊겨도
+   *    영수증은 나와야 한다 (기존 동작 유지). 대신 오프라인 데이터임을 알린다.
+   */
+  const loadPrintTransactions = async (
+    date: string,
+  ): Promise<{ rows: any[]; stale: boolean }> => {
+    try {
+      const { getTransactionsForDate } = await import("@/lib/transactions-query");
+      return { rows: await getTransactionsForDate(date), stale: false };
+    } catch (err) {
+      console.warn("[receipt] 서버 거래 조회 실패 — 로컬 캐시로 출력합니다:", err);
+      const local = transactions.filter((t: any) => t.date === date || t.date?.startsWith(date));
+      return { rows: local, stale: true };
+    }
+  };
+
   // 특정 거래처 영수증 미리보기
   const handleCustomerReceiptPreview = async (receipt: ReceiptGroup) => {
     if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     try {
       const { openReceiptPreview } = await import("@/lib/print-receipt");
-      const filtered = transactions.filter(
-        (t: any) => t.customerName === receipt.customerName && t.date.startsWith(selectedDate),
-      );
+      const { rows, stale } = await loadPrintTransactions(selectedDate);
+      if (stale) showToast("오프라인 데이터 기준으로 출력합니다.", "info");
+      const filtered = rows.filter((t: any) => t.customerName === receipt.customerName);
       await openReceiptPreview(
         filtered as any,
         selectedDate,
@@ -266,7 +288,9 @@ export default function ReceiptScreen() {
     setIsExporting(true);
     try {
       const { openDailySummaryPreview } = await import("@/lib/print-daily-summary");
-      await openDailySummaryPreview(transactions as any, selectedDate);
+      const { rows, stale } = await loadPrintTransactions(selectedDate);
+      if (stale) showToast("오프라인 데이터 기준으로 출력합니다.", "info");
+      await openDailySummaryPreview(rows as any, selectedDate);
     } catch (error: any) {
       showToast(error?.message || "집계표 생성 실패", "error");
     } finally {
@@ -284,7 +308,9 @@ export default function ReceiptScreen() {
     setIsExporting(true);
     try {
       const { openReceiptPreview } = await import("@/lib/print-receipt");
-      await openReceiptPreview(transactions as any, selectedDate);
+      const { rows, stale } = await loadPrintTransactions(selectedDate);
+      if (stale) showToast("오프라인 데이터 기준으로 출력합니다.", "info");
+      await openReceiptPreview(rows as any, selectedDate);
     } catch (error: any) {
       showToast(error?.message || "영수증 생성 실패", "error");
     } finally {
