@@ -10,6 +10,17 @@ export interface Customer {
   name: string;
   /** 별칭 목록 (검색 시 사용) */
   aliases: string[];
+  /**
+   * 은행 입금 문자에 찍히는 입금자명 목록 (예: ["박태상"]).
+   *
+   * aliases 와 **역할이 다르다** — aliases 는 거래처 검색(초성 포함)에 쓰이고,
+   * payerNames 는 입금 자동 매칭에만 쓰인다. 여기에 넣은 사람 이름은
+   * 거래처 검색창에 노출되지 않는다.
+   *
+   * optional 인 이유: data.ts 의 기존 시드 거래처들이 이 필드를 갖고 있지 않다.
+   * 읽을 때는 `?? []` 로 처리한다.
+   */
+  payerNames?: string[];
 }
 
 /**

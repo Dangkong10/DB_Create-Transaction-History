@@ -90,8 +90,12 @@ export async function saveCustomers(customers: Customer[]): Promise<void> {
   await writeLocalCustomers(customers);
 }
 
-export async function addCustomer(name: string, aliases: string[] = []): Promise<Customer> {
-  const created = await addCustomerToDB(name, aliases);
+export async function addCustomer(
+  name: string,
+  aliases: string[] = [],
+  payerNames: string[] = [],
+): Promise<Customer> {
+  const created = await addCustomerToDB(name, aliases, payerNames);
   const local = (await readLocalCustomers()) ?? [];
   await writeLocalCustomers([...local, created]);
   return created;

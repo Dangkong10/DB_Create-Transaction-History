@@ -450,6 +450,8 @@ function rowToCustomer(row: any): Customer {
     id: String(row.id),
     name: row.name,
     aliases: Array.isArray(row.aliases) ? row.aliases : [],
+    // payer_names 마이그레이션 이전 환경에서도 안전하도록 빈 배열 fallback
+    payerNames: Array.isArray(row.payer_names) ? row.payer_names : [],
   };
 }
 
@@ -470,13 +472,17 @@ export async function getCustomersFromDB(): Promise<Customer[]> {
   return (data ?? []).map(rowToCustomer);
 }
 
-export async function addCustomerToDB(name: string, aliases: string[] = []): Promise<Customer> {
+export async function addCustomerToDB(
+  name: string,
+  aliases: string[] = [],
+  payerNames: string[] = [],
+): Promise<Customer> {
   const session = await getSession();
   if (!session) throw new Error('로그인이 필요합니다.');
 
   const { data, error } = await supabase
     .from('customers')
-    .insert({ user_id: session.user.id, name, aliases })
+    .insert({ user_id: session.user.id, name, aliases, payer_names: payerNames })
     .select()
     .single();
 
@@ -495,6 +501,7 @@ export async function updateCustomerInDB(id: string, updates: Partial<Customer>)
   const patch: Record<string, any> = {};
   if (updates.name !== undefined) patch.name = updates.name;
   if (updates.aliases !== undefined) patch.aliases = updates.aliases;
+  if (updates.payerNames !== undefined) patch.payer_names = updates.payerNames;
 
   const { error } = await supabase
     .from('customers')

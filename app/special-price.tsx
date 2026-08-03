@@ -23,8 +23,9 @@ import { ScreenContainer } from "@/components/screen-container";
 import { ResponsiveContainer } from "@/components/responsive-container";
 import { useToast } from "@/lib/toast-provider";
 import { useConfirm } from "@/lib/confirm-provider";
-import { loadProducts } from "@/lib/storage";
+import { loadProducts, loadCustomers, updateCustomer } from "@/lib/storage";
 import { searchProducts } from "@/lib/search-utils";
+import type { Customer } from "@/lib/types";
 import {
   getSpecialPricesByCustomer, addSpecialPrice, deleteSpecialPrice,
 } from "@/lib/supabase";
@@ -52,6 +53,12 @@ export default function SpecialPriceScreen() {
   const [specialPrices, setSpecialPrices] = useState<SpecialPrice[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // 거래처 정보 편집 (별칭 / 입금자명)
+  const [customerRecord, setCustomerRecord] = useState<Customer | null>(null);
+  const [aliasText, setAliasText] = useState("");
+  const [payerText, setPayerText] = useState("");
+  const [savingInfo, setSavingInfo] = useState(false);
+
   // 특가 추가 폼
   const [productQuery, setProductQuery] = useState("");
   const [pickedProduct, setPickedProduct] = useState<Product | null>(null);
@@ -78,12 +85,18 @@ export default function SpecialPriceScreen() {
 
   const loadData = async () => {
     try {
-      const [loadedProducts, prices] = await Promise.all([
+      const [loadedProducts, prices, loadedCustomers] = await Promise.all([
         loadProducts(),
         getSpecialPricesByCustomer(customerName),
+        loadCustomers(),
       ]);
       setProducts(loadedProducts);
       setSpecialPrices(prices);
+
+      const rec = loadedCustomers.find((c) => c.name === customerName) ?? null;
+      setCustomerRecord(rec);
+      setAliasText((rec?.aliases ?? []).join(", "));
+      setPayerText((rec?.payerNames ?? []).join(", "));
     } catch (err) {
       console.error("[special-price] load 실패:", err);
       showToast("특가 목록을 불러오는 데 실패했습니다.", "error");
@@ -97,6 +110,40 @@ export default function SpecialPriceScreen() {
     loadData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customerName]);
+
+  /** 쉼표 구분 문자열 → 중복 제거된 배열 */
+  const splitList = (text: string): string[] =>
+    Array.from(new Set(text.split(",").map((s) => s.trim()).filter(Boolean)));
+
+  /**
+   * 거래처 정보 저장 (별칭 / 입금자명).
+   *
+   * 거래처명(name)은 여기서 바꾸지 않는다 — transactions/payments 가 customer_name 을
+   * TEXT 로 들고 있어서, 이름을 바꾸면 과거 거래·입금과 연결이 끊기고 미수금이 통째로
+   * 어긋난다. 이름 변경은 관련 테이블 일괄 갱신이 필요한 별도 작업이다.
+   */
+  const handleSaveCustomerInfo = async () => {
+    if (!customerRecord) {
+      showToast("거래처 정보를 찾을 수 없습니다.", "error");
+      return;
+    }
+    const aliases = splitList(aliasText);
+    const payerNames = splitList(payerText);
+
+    setSavingInfo(true);
+    try {
+      await updateCustomer(customerRecord.id, { aliases, payerNames });
+      setCustomerRecord({ ...customerRecord, aliases, payerNames });
+      setAliasText(aliases.join(", "));
+      setPayerText(payerNames.join(", "));
+      showToast("거래처 정보가 저장되었습니다.", "success");
+    } catch (err: any) {
+      console.error("[special-price] 거래처 정보 저장 실패:", err);
+      showToast(err?.message || "거래처 정보 저장에 실패했습니다.", "error");
+    } finally {
+      setSavingInfo(false);
+    }
+  };
 
   const handlePickProduct = (p: Product) => {
     setPickedProduct(p);
@@ -203,7 +250,7 @@ export default function SpecialPriceScreen() {
           <Text style={{ color: "#ffffff", fontSize: 15, fontWeight: "600" }}>뒤로</Text>
         </TouchableOpacity>
         <Text style={{ color: "#ffffff", fontSize: 17, fontWeight: "700", flex: 1 }} numberOfLines={1}>
-          {customerName} 특가 설정
+          {customerName} 거래처 설정
         </Text>
       </View>
 
@@ -219,8 +266,74 @@ export default function SpecialPriceScreen() {
           contentContainerStyle={{ padding: 20, paddingBottom: 80 }}
           style={Platform.OS === "web" ? ({ flex: 1, minHeight: 0, maxHeight: "100%" } as any) : { flex: 1 }}
         >
+          {/* 거래처 정보 카드 — 별칭 / 입금자명 */}
+          <View style={{ backgroundColor: "#ffffff", borderRadius: 14, padding: 18, marginBottom: 16 }}>
+            <Text style={{ fontSize: 16, fontWeight: "700", color: NAVY, marginBottom: 14 }}>
+              📇 거래처 정보
+            </Text>
+
+            <Text style={{ fontSize: 14, color: "#666666", marginBottom: 6 }}>거래처명</Text>
+            <View
+              style={{
+                backgroundColor: "#f0f0f0", borderRadius: 10, padding: 12,
+                borderWidth: 1, borderColor: "#e0e0e0", marginBottom: 4,
+              }}
+            >
+              <Text style={{ fontSize: 16, color: "#666666" }}>{customerName}</Text>
+            </View>
+            <Text style={{ fontSize: 12, color: "#999999", marginBottom: 16 }}>
+              거래처명은 과거 거래·입금 기록과 이름으로 연결돼 있어 여기서 바꿀 수 없습니다.
+            </Text>
+
+            <Text style={{ fontSize: 14, color: "#666666", marginBottom: 6 }}>별칭 (검색용)</Text>
+            <TextInput
+              value={aliasText}
+              onChangeText={setAliasText}
+              placeholder="쉼표로 구분 (예: 7조, 켈리)"
+              placeholderTextColor="#999999"
+              style={{
+                backgroundColor: "#f5f5f5", borderRadius: 10, padding: 12,
+                borderWidth: 1, borderColor: "#e0e0e0", fontSize: 16, color: NAVY,
+              }}
+            />
+            <Text style={{ fontSize: 12, color: "#999999", marginTop: 6, marginBottom: 16 }}>
+              거래처를 빠르게 찾기 위한 이름입니다. 초성 검색도 됩니다.
+            </Text>
+
+            <Text style={{ fontSize: 14, color: "#666666", marginBottom: 6 }}>입금자명 (은행 문자용)</Text>
+            <TextInput
+              value={payerText}
+              onChangeText={setPayerText}
+              placeholder="쉼표로 구분 (예: 박태상)"
+              placeholderTextColor="#999999"
+              style={{
+                backgroundColor: "#f5f5f5", borderRadius: 10, padding: 12,
+                borderWidth: 1, borderColor: "#e0e0e0", fontSize: 16, color: NAVY,
+              }}
+            />
+            <Text style={{ fontSize: 12, color: "#999999", marginTop: 6, marginBottom: 16 }}>
+              은행 입금 문자에 찍히는 이름입니다. 거래처명 또는 이 이름과 완전히 같을 때만 입금이 자동으로 잡힙니다. 거래처 검색에는 나타나지 않습니다.
+            </Text>
+
+            <TouchableOpacity
+              onPress={handleSaveCustomerInfo}
+              disabled={savingInfo || !customerRecord}
+              style={{
+                backgroundColor: savingInfo || !customerRecord ? "#9ca3af" : NAVY,
+                borderRadius: 10, paddingVertical: 14, alignItems: "center",
+              }}
+            >
+              <Text style={{ color: "#ffffff", fontSize: 16, fontWeight: "700" }}>
+                {savingInfo ? "저장 중..." : "거래처 정보 저장"}
+              </Text>
+            </TouchableOpacity>
+          </View>
+
           {/* 특가 추가 카드 */}
           <View style={{ backgroundColor: "#ffffff", borderRadius: 14, padding: 18, marginBottom: 16 }}>
+            <Text style={{ fontSize: 16, fontWeight: "700", color: NAVY, marginBottom: 14 }}>
+              💰 특가 설정
+            </Text>
             <Text style={{ fontSize: 14, color: "#666666", marginBottom: 8 }}>제품명</Text>
             <TextInput
               value={productQuery}

@@ -30,3 +30,6 @@ expo-env.d.ts
 dist-debug
 .env*
 .vercel
+
+# 로컬 점검 스크립트가 생성하는 거래처 목록 (거래처명 포함 — 커밋 금지)
+scripts/_customers.json

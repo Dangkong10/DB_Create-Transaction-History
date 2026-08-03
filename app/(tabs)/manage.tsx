@@ -529,7 +529,7 @@ export default function ManageScreen() {
                         onPress={() => router.push(`/special-price?customer=${encodeURIComponent(item.name)}`)}
                         style={{ backgroundColor: '#1B365D', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 }}
                       >
-                        <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600' }}>특가 설정</Text>
+                        <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600' }}>거래처 설정</Text>
                       </TouchableOpacity>
                       <TouchableOpacity
                         onPress={() => handleDeleteCustomer(item)}
