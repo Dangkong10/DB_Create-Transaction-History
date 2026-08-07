@@ -36,7 +36,21 @@ import {
   type Adjustment,
 } from '@/lib/payments';
 
-type TabKey = 'payment' | 'adjustment';
+/**
+ * 보관함 탭
+ *   payment    — 손으로 넣은 입금 (source='manual')
+ *   bank       — 은행 문자에서 자동 반영된 입금 (source='bank')
+ *   adjustment — 미수금 조정
+ *
+ * payment/bank 는 같은 payments 테이블을 출처로만 가른다.
+ */
+type TabKey = 'payment' | 'bank' | 'adjustment';
+
+const TAB_LABEL: Record<TabKey, string> = {
+  payment: '💰 입금',
+  bank: '🏦 은행_입금',
+  adjustment: '⚖️ 조정',
+};
 
 function todayStr(): string {
   const d = new Date();
@@ -467,15 +481,22 @@ export default function DepositHistoryScreen() {
     void loadAll();
   }, [loadAll]);
 
+  /** 출처로 가른 입금 — 같은 테이블을 보되 손입력/문자 반영을 나눠 본다 */
+  const manualPayments = useMemo(() => payments.filter((p) => p.source !== 'bank'), [payments]);
+  const bankPayments = useMemo(() => payments.filter((p) => p.source === 'bank'), [payments]);
+
+  /** 지금 탭이 다루는 입금 목록 */
+  const tabPayments = tab === 'bank' ? bankPayments : manualPayments;
+
   /** 검색 필터 */
   const filteredPayments = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return payments;
-    return payments.filter(
+    if (!q) return tabPayments;
+    return tabPayments.filter(
       (p) =>
         p.customerName.toLowerCase().includes(q) || p.paymentDate.includes(q),
     );
-  }, [payments, query]);
+  }, [tabPayments, query]);
 
   const filteredAdjustments = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -567,13 +588,28 @@ export default function DepositHistoryScreen() {
 
   // ===== 렌더 =====
 
-  const currentCount =
-    tab === 'payment' ? filteredPayments.length : filteredAdjustments.length;
-  const totalCount = tab === 'payment' ? payments.length : adjustments.length;
-  const currentTotal = tab === 'payment' ? paymentTotal : adjustmentTotal;
+  const isAdj = tab === 'adjustment';
+  const currentCount = isAdj ? filteredAdjustments.length : filteredPayments.length;
+  const totalCount = isAdj
+    ? adjustments.length
+    : tab === 'bank'
+      ? bankPayments.length
+      : manualPayments.length;
+  const currentTotal = isAdj ? adjustmentTotal : paymentTotal;
   // 합계가 올해 기준이므로, 그 합계가 몇 건에 대한 것인지 함께 보여준다.
-  const currentYearCount =
-    tab === 'payment' ? paymentsThisYear.length : adjustmentsThisYear.length;
+  const currentYearCount = isAdj ? adjustmentsThisYear.length : paymentsThisYear.length;
+  /** 은행 탭에서는 함께 받은 부가세도 따로 보여준다 */
+  const vatTotal = useMemo(
+    () => (tab === 'bank' ? paymentsThisYear.reduce((s, p) => s + (p.vatAmount ?? 0), 0) : 0),
+    [tab, paymentsThisYear],
+  );
+
+  /** 각 탭의 전체 건수 (탭 라벨에 표시) */
+  const tabCount: Record<TabKey, number> = {
+    payment: manualPayments.length,
+    bank: bankPayments.length,
+    adjustment: adjustments.length,
+  };
 
   return (
     <ScreenContainer style={{ backgroundColor: '#f5f5f5' }}>
@@ -619,10 +655,10 @@ export default function DepositHistoryScreen() {
               borderBottomColor: '#e5e7eb',
             }}
           >
-            {(['payment', 'adjustment'] as TabKey[]).map((key) => {
+            {(['payment', 'bank', 'adjustment'] as TabKey[]).map((key) => {
               const active = tab === key;
-              const label = key === 'payment' ? '💰 입금' : '⚖️ 조정';
-              const activeColor = key === 'payment' ? '#1B365D' : '#7c3aed';
+              const activeColor =
+                key === 'payment' ? '#1B365D' : key === 'bank' ? '#0f766e' : '#7c3aed';
               return (
                 <TouchableOpacity
                   key={key}
@@ -637,12 +673,13 @@ export default function DepositHistoryScreen() {
                 >
                   <Text
                     style={{
-                      fontSize: 14,
+                      fontSize: 13,
                       fontWeight: '700',
                       color: active ? activeColor : '#94a3b8',
                     }}
+                    numberOfLines={1}
                   >
-                    {label} ({tab === key ? currentCount : (key === 'payment' ? payments.length : adjustments.length)})
+                    {TAB_LABEL[key]} ({active ? currentCount : tabCount[key]})
                   </Text>
                 </TouchableOpacity>
               );
@@ -680,17 +717,39 @@ export default function DepositHistoryScreen() {
               <Text style={{ fontSize: 12, color: '#666' }}>
                 {currentCount}건 {query ? `(전체 ${totalCount}건 중)` : ''}
               </Text>
-              <Text
-                style={{
-                  fontSize: 13,
-                  fontWeight: '700',
-                  color: tab === 'payment' ? '#1B365D' : currentTotal >= 0 ? '#dc2626' : '#16a34a',
-                  ...(Platform.OS === 'web' ? ({ fontFamily: 'monospace' } as any) : {}),
-                }}
-              >
-                {thisYear}년 합계 {tab === 'payment' ? formatNumber(currentTotal) : formatSigned(currentTotal)}원
-                {currentYearCount > 0 ? ` (${currentYearCount}건)` : ''}
-              </Text>
+              <View style={{ alignItems: 'flex-end' }}>
+                <Text
+                  style={{
+                    fontSize: 13,
+                    fontWeight: '700',
+                    color: !isAdj
+                      ? tab === 'bank'
+                        ? '#0f766e'
+                        : '#1B365D'
+                      : currentTotal >= 0
+                        ? '#dc2626'
+                        : '#16a34a',
+                    ...(Platform.OS === 'web' ? ({ fontFamily: 'monospace' } as any) : {}),
+                  }}
+                >
+                  {thisYear}년 합계 {!isAdj ? formatNumber(currentTotal) : formatSigned(currentTotal)}원
+                  {currentYearCount > 0 ? ` (${currentYearCount}건)` : ''}
+                </Text>
+                {/* 은행 탭: 공급가 합계와 별개로 함께 받은 부가세를 보여준다 */}
+                {tab === 'bank' && vatTotal > 0 && (
+                  <Text
+                    style={{
+                      fontSize: 11,
+                      color: '#b45309',
+                      marginTop: 2,
+                      ...(Platform.OS === 'web' ? ({ fontFamily: 'monospace' } as any) : {}),
+                    }}
+                  >
+                    부가세 {formatNumber(vatTotal)}원 · 실제 이체{' '}
+                    {formatNumber(currentTotal + vatTotal)}원
+                  </Text>
+                )}
+              </View>
             </View>
           </View>
 
@@ -700,10 +759,10 @@ export default function DepositHistoryScreen() {
               <ActivityIndicator />
               <Text style={{ marginTop: 12, color: '#666' }}>기록 로딩 중...</Text>
             </View>
-          ) : tab === 'payment' ? (
+          ) : !isAdj ? (
             <PaymentList
               rows={filteredPayments}
-              totalCount={payments.length}
+              totalCount={totalCount}
               onEdit={setEditingPayment}
               onDelete={handleDeletePayment}
             />
@@ -773,7 +832,12 @@ function PaymentList({
             borderBottomColor: '#f1f5f9',
           }}
         >
-          <Text style={{ flex: 1.4, fontSize: 14, color: '#1B365D' }}>{p.customerName}</Text>
+          <View style={{ flex: 1.4 }}>
+            <Text style={{ fontSize: 14, color: '#1B365D' }}>{p.customerName}</Text>
+            {p.source === 'bank' && (
+              <Text style={{ fontSize: 10, color: '#0f766e', marginTop: 2 }}>문자</Text>
+            )}
+          </View>
           <Text
             style={{
               flex: 1.2,
@@ -784,19 +848,33 @@ function PaymentList({
           >
             {p.paymentDate}
           </Text>
-          <Text
-            style={{
-              flex: 1.3,
-              fontSize: 14,
-              color: '#1B365D',
-              fontWeight: '600',
-              textAlign: 'right',
-              paddingRight: 8,
-              ...(Platform.OS === 'web' ? ({ fontFamily: 'monospace' } as any) : {}),
-            }}
-          >
-            {formatNumber(p.amount)}
-          </Text>
+          <View style={{ flex: 1.3, paddingRight: 8 }}>
+            <Text
+              style={{
+                fontSize: 14,
+                color: '#1B365D',
+                fontWeight: '600',
+                textAlign: 'right',
+                ...(Platform.OS === 'web' ? ({ fontFamily: 'monospace' } as any) : {}),
+              }}
+            >
+              {formatNumber(p.amount)}
+            </Text>
+            {/* 부가세를 함께 받은 건은 실제 이체액을 함께 보여준다 (통장 대조용) */}
+            {p.vatAmount > 0 && (
+              <Text
+                style={{
+                  fontSize: 10,
+                  color: '#b45309',
+                  textAlign: 'right',
+                  marginTop: 1,
+                  ...(Platform.OS === 'web' ? ({ fontFamily: 'monospace' } as any) : {}),
+                }}
+              >
+                +부가세 {formatNumber(p.vatAmount)}
+              </Text>
+            )}
+          </View>
           <RowActions onEdit={() => onEdit(p)} onDelete={() => onDelete(p)} />
         </View>
       ))}

@@ -452,6 +452,7 @@ function rowToCustomer(row: any): Customer {
     aliases: Array.isArray(row.aliases) ? row.aliases : [],
     // payer_names 마이그레이션 이전 환경에서도 안전하도록 빈 배열 fallback
     payerNames: Array.isArray(row.payer_names) ? row.payer_names : [],
+    vatIncluded: row.vat_included === true,
   };
 }
 
@@ -502,6 +503,7 @@ export async function updateCustomerInDB(id: string, updates: Partial<Customer>)
   if (updates.name !== undefined) patch.name = updates.name;
   if (updates.aliases !== undefined) patch.aliases = updates.aliases;
   if (updates.payerNames !== undefined) patch.payer_names = updates.payerNames;
+  if (updates.vatIncluded !== undefined) patch.vat_included = updates.vatIncluded;
 
   const { error } = await supabase
     .from('customers')

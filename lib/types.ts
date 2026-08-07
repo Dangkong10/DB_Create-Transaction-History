@@ -21,6 +21,12 @@ export interface Customer {
    * 읽을 때는 `?? []` 로 처리한다.
    */
   payerNames?: string[];
+  /**
+   * true 면 이 거래처는 공급가에 부가세 10% 를 더해 이체한다.
+   * 입금 화면에서 "받을 금액" 이 부가세 포함으로 표시되고,
+   * 저장할 때 공급가(amount)와 부가세(vatAmount)로 나뉘어 기록된다.
+   */
+  vatIncluded?: boolean;
 }
 
 /**

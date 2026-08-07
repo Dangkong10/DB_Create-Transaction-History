@@ -57,6 +57,7 @@ export default function SpecialPriceScreen() {
   const [customerRecord, setCustomerRecord] = useState<Customer | null>(null);
   const [aliasText, setAliasText] = useState("");
   const [payerText, setPayerText] = useState("");
+  const [vatIncluded, setVatIncluded] = useState(false);
   const [savingInfo, setSavingInfo] = useState(false);
 
   // 특가 추가 폼
@@ -97,6 +98,7 @@ export default function SpecialPriceScreen() {
       setCustomerRecord(rec);
       setAliasText((rec?.aliases ?? []).join(", "));
       setPayerText((rec?.payerNames ?? []).join(", "));
+      setVatIncluded(rec?.vatIncluded === true);
     } catch (err) {
       console.error("[special-price] load 실패:", err);
       showToast("특가 목록을 불러오는 데 실패했습니다.", "error");
@@ -132,8 +134,8 @@ export default function SpecialPriceScreen() {
 
     setSavingInfo(true);
     try {
-      await updateCustomer(customerRecord.id, { aliases, payerNames });
-      setCustomerRecord({ ...customerRecord, aliases, payerNames });
+      await updateCustomer(customerRecord.id, { aliases, payerNames, vatIncluded });
+      setCustomerRecord({ ...customerRecord, aliases, payerNames, vatIncluded });
       setAliasText(aliases.join(", "));
       setPayerText(payerNames.join(", "));
       showToast("거래처 정보가 저장되었습니다.", "success");
@@ -314,6 +316,53 @@ export default function SpecialPriceScreen() {
             <Text style={{ fontSize: 12, color: "#999999", marginTop: 6, marginBottom: 16 }}>
               은행 입금 문자에 찍히는 이름입니다. 거래처명 또는 이 이름과 완전히 같을 때만 입금이 자동으로 잡힙니다. 거래처 검색에는 나타나지 않습니다.
             </Text>
+
+            {/* 부가세 포함 입금 토글 */}
+            <TouchableOpacity
+              onPress={() => setVatIncluded((v) => !v)}
+              activeOpacity={0.8}
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 12,
+                padding: 14,
+                borderRadius: 10,
+                borderWidth: 1,
+                borderColor: vatIncluded ? "#fcd9a0" : "#e0e0e0",
+                backgroundColor: vatIncluded ? "#fffbeb" : "#fafafa",
+                marginBottom: 16,
+              }}
+            >
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 14, fontWeight: "700", color: NAVY }}>
+                  부가세 포함 입금
+                </Text>
+                <Text style={{ fontSize: 12, color: "#8a7a55", marginTop: 3, lineHeight: 17 }}>
+                  이 거래처는 공급가에 부가세 10%를 더해 이체합니다. 켜면 입금 화면의 받을 금액이
+                  부가세 포함으로 표시되고, 저장할 때 공급가와 부가세로 나뉘어 기록됩니다.
+                </Text>
+              </View>
+              <View
+                style={{
+                  width: 46,
+                  height: 26,
+                  borderRadius: 13,
+                  backgroundColor: vatIncluded ? "#d97706" : "#d1d5db",
+                  justifyContent: "center",
+                  paddingHorizontal: 3,
+                }}
+              >
+                <View
+                  style={{
+                    width: 20,
+                    height: 20,
+                    borderRadius: 10,
+                    backgroundColor: "#ffffff",
+                    alignSelf: vatIncluded ? "flex-end" : "flex-start",
+                  }}
+                />
+              </View>
+            </TouchableOpacity>
 
             <TouchableOpacity
               onPress={handleSaveCustomerInfo}

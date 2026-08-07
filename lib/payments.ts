@@ -24,7 +24,14 @@ export interface Payment {
   id: string;
   customerName: string;
   paymentDate: string; // YYYY-MM-DD
+  /** 공급가. 미수금 계산에 쓰이는 값 */
   amount: number;
+  /** 함께 받은 부가세 (없으면 0). 실제 이체액 = amount + vatAmount */
+  vatAmount: number;
+  /** 'manual' = 손으로 입력, 'bank' = 은행 문자에서 자동 반영 */
+  source: 'manual' | 'bank';
+  /** source='bank' 인 경우 근거가 된 알림 id */
+  bankAlertId: string | null;
   createdAt: string;   // YYYY-MM-DD HH:mm:ss
 }
 
@@ -62,6 +69,10 @@ function rowToPayment(row: any): Payment {
     customerName: row.customer_name,
     paymentDate: row.payment_date,
     amount: row.amount,
+    // 마이그레이션 이전 행이나 구버전 응답에서도 안전하도록 기본값 처리
+    vatAmount: Number(row.vat_amount ?? 0),
+    source: row.source === 'bank' ? 'bank' : 'manual',
+    bankAlertId: row.bank_alert_id == null ? null : String(row.bank_alert_id),
     createdAt: formatCreatedAt(row.created_at),
   };
 }
@@ -289,6 +300,22 @@ export interface PaymentInput {
   paymentDate: string;
   /** 양의 정수 */
   amount: number;
+  /**
+   * 입금 출처. 생략하면 'manual'(손으로 입력).
+   * 은행 문자에서 자동 반영된 건은 'bank'.
+   */
+  source?: 'manual' | 'bank';
+  /**
+   * 근거가 된 bank_alerts 행 id (source='bank' 일 때만).
+   * DB 에 유니크 인덱스가 걸려 있어 같은 알림이 두 번 입금 처리되지 않는다.
+   */
+  bankAlertId?: string;
+  /**
+   * 함께 받은 부가세. 생략하면 0.
+   * amount 는 공급가이므로 미수금은 amount 만으로 계산된다.
+   * 실제 이체액 = amount + vatAmount.
+   */
+  vatAmount?: number;
 }
 
 /**
@@ -347,10 +374,14 @@ export async function savePayments(items: PaymentInput[]): Promise<Payment[]> {
   // user_id 는 RPC 내부에서 auth.uid() 로 강제됨 → 페이로드에 보낼 필요 없음.
   await getUserIdOrThrow(); // 로그인 여부만 미리 체크
 
+  // source/bank_alert_id 는 RPC 에서 생략 시 'manual'/NULL 로 처리된다 (하위호환)
   const payload = items.map((it) => ({
     customer_name: it.customerName,
     payment_date: it.paymentDate,
     amount: it.amount,
+    ...(it.vatAmount ? { vat_amount: it.vatAmount } : {}),
+    ...(it.source ? { source: it.source } : {}),
+    ...(it.bankAlertId ? { bank_alert_id: it.bankAlertId } : {}),
   }));
 
   const { data, error } = await supabase.rpc('add_payments', { p_items: payload });

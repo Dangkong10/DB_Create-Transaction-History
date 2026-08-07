@@ -26,8 +26,10 @@ const ROWS_PER_COL = 3;
 /** 배치 계산이 끝난 영수증 */
 interface PlacedReceipt {
   receipt: ReceiptGroup;
-  /** 전잔고 (0이면 표기 안 함) */
+  /** 전잔고 (0이면 표기 안 함) — 당일 입금 차감 **전** 금액 */
   prev: number;
+  /** 당일 입금 (0이면 표기 안 함) */
+  payment: number;
   /** 세로로 차지하는 칸 수 (1 = 일반) */
   span: number;
   /** 품목 영역 행 수 */
@@ -66,11 +68,14 @@ export async function openReceiptPreview(
   const normal: PlacedReceipt[] = [];
   const oversized: PlacedReceipt[] = [];
   receipts.forEach((r) => {
-    const prev = receiptPrev(balancesByCustomer.get(r.customerName));
-    const rowsNeeded = r.items.length + (prev > 0 ? 1 : 0);
+    const b = balancesByCustomer.get(r.customerName);
+    const prev = receiptPrev(b);
+    const payment = receiptPayment(b);
+    // 품목 + 전잔고 행 + 입금 행까지 감안해 칸 수를 잡는다
+    const rowsNeeded = r.items.length + (prev > 0 ? 1 : 0) + (payment > 0 ? 1 : 0);
     const span = spanForRows(rowsNeeded);
     const maxRows = Math.max(SPAN_ITEM_ROWS[span], rowsNeeded);
-    const placed: PlacedReceipt = { receipt: r, prev, span, maxRows };
+    const placed: PlacedReceipt = { receipt: r, prev, payment, span, maxRows };
     (span > 1 ? oversized : normal).push(placed);
   });
 
@@ -89,19 +94,38 @@ export async function openReceiptPreview(
 // =================================================================
 
 /**
- * 영수증 한 장에 적힐 「전잔고」 값.
+ * 영수증 한 장에 적힐 「전잔고」 값 — **당일 입금을 빼기 전** 금액.
  *
- *   집계표용 prev (= D 직전 잔고, 당일 입금 차감 안 됨)에서
- *   당일 입금까지 마저 빼서 "지금 받을 돈" 의미로 되돌린다.
+ *   prev = SUM(매출 < D) − SUM(입금 < D) + SUM(조정 ≤ D)
  *
- *   prev_for_receipt = SUM(매출<D) − SUM(입금≤D) + SUM(조정≤D)
+ * 예전에는 여기서 당일 입금까지 미리 빼서 한 줄로 보여줬는데,
+ * 그러면 "입금했는데 왜 이 금액이지?" 를 받는 쪽이 알 수 없었다.
+ * 이제 전잔고는 그대로 두고 「은행_입금」을 별도 행으로 보여준다.
  *
- *   영수증 총액 = prev_for_receipt + 당일 매출
- *               = 거래처가 이번에 줘야 할 돈
+ *   영수증 총액 = 전잔고 − 당일입금 + 당일매출   (금액은 예전과 동일)
  */
 function receiptPrev(b: ReceiptBalances | undefined): number {
   if (!b) return 0;
-  return b.previousBalance - b.dailyPayment;
+  return b.previousBalance;
+}
+
+/** 당일 입금액 (0이면 행을 만들지 않는다) */
+function receiptPayment(b: ReceiptBalances | undefined): number {
+  return b?.dailyPayment ?? 0;
+}
+
+/** 'YYYY-MM-DD' → 'MM-DD' (영수증 칸이 좁아 연도는 생략) */
+function shortDate(d: string): string {
+  return /^\d{4}-\d{2}-\d{2}$/.test(d) ? d.slice(5) : d;
+}
+
+/** 전잔고 기준일 = 전표날짜 하루 전 */
+function prevBalanceDate(dateStr: string): string {
+  const d = new Date(`${dateStr}T00:00:00`);
+  d.setDate(d.getDate() - 1);
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${m}-${day}`;
 }
 
 /** 필요 행 수 → 세로 칸 수 (최대 3칸 = 한 페이지의 한 열) */
@@ -151,7 +175,7 @@ function buildReceiptHtml(
       if (slot < pageReceipts.length) {
         const p = pageReceipts[slot];
         parts.push('<div class="r-block" style="padding:2mm; border:0.5px solid #ddd; display:flex; flex-direction:column; overflow:hidden;">');
-        parts.push(buildSingleReceipt(p.receipt, p.maxRows, p.prev));
+        parts.push(buildSingleReceipt(p.receipt, p.maxRows, p.prev, p.payment));
         parts.push('</div>');
       } else {
         parts.push(emptySlotHtml());
@@ -170,7 +194,7 @@ function buildReceiptHtml(
 
     page.slots.forEach(({ placed, col, row }) => {
       parts.push(`<div class="r-block" style="grid-column:${col}; grid-row:${row} / span ${placed.span}; padding:2mm; border:0.5px solid #ddd; display:flex; flex-direction:column; overflow:hidden;">`);
-      parts.push(buildSingleReceipt(placed.receipt, placed.maxRows, placed.prev));
+      parts.push(buildSingleReceipt(placed.receipt, placed.maxRows, placed.prev, placed.payment));
       parts.push('</div>');
     });
 
@@ -199,6 +223,7 @@ function buildSingleReceipt(
   receipt: ReceiptGroup,
   maxRows: number,
   previousBalance: number = 0,
+  dailyPayment: number = 0,
 ): string {
   const date = formatDateWithDay(receipt.date);
   let totalPrice = 0;
@@ -227,22 +252,41 @@ function buildSingleReceipt(
     }
   }
 
-  // 전잔고: 항상 표기 — '공급가 총액' 바로 윗 행.
-  // maxRows 는 배치 단계에서 품목 + 전잔고 행까지 감안해 계산되므로
-  // 마지막 행은 항상 빈 행이지만, 만약을 위해 꽉 찬 경우 행을 추가한다.
+  // 전잔고 · 은행_입금: '공급가 총액' 바로 윗 행들.
+  // 수량 칸에 날짜를 적어 "언제 기준인지 / 언제 들어온 입금인지" 를 함께 보여준다.
+  // maxRows 는 배치 단계에서 이 행들까지 감안해 계산되므로 보통 빈 행을 대체한다.
+  const tailRows: string[] = [];
+
   if (previousBalance > 0) {
-    const prevRow = `
+    tailRows.push(`
       <tr class="ri">
         <td contenteditable="true" style="text-align:right; font-weight:600; color:#92400e;">전잔고</td>
-        <td>&nbsp;</td>
+        <td contenteditable="true" style="text-align:center; font-size:.85em; color:#92400e;">~${prevBalanceDate(receipt.date)}</td>
         <td contenteditable="true" style="text-align:right; font-weight:600; color:#92400e;">${formatNumber(previousBalance)}</td>
-      </tr>`;
-    if (receipt.items.length < maxRows) {
-      itemRows[itemRows.length - 1] = prevRow;
-    } else {
-      itemRows.push(prevRow);
-    }
+      </tr>`);
     totalPrice += previousBalance;
+  }
+
+  if (dailyPayment > 0) {
+    tailRows.push(`
+      <tr class="ri">
+        <td contenteditable="true" style="text-align:right; font-weight:600; color:#0f766e;">은행_입금</td>
+        <td contenteditable="true" style="text-align:center; font-size:.85em; color:#0f766e;">${shortDate(receipt.date)}</td>
+        <td contenteditable="true" style="text-align:right; font-weight:600; color:#0f766e;">-${formatNumber(dailyPayment)}</td>
+      </tr>`);
+    totalPrice -= dailyPayment;
+  }
+
+  // 뒤쪽 빈 행부터 채워 넣는다 (자리가 모자라면 이어 붙인다)
+  for (const row of tailRows) {
+    if (receipt.items.length < itemRows.length) {
+      const emptyIdx = itemRows.findIndex((r, i) => i >= receipt.items.length && r.includes('&nbsp;'));
+      if (emptyIdx >= 0) {
+        itemRows[emptyIdx] = row;
+        continue;
+      }
+    }
+    itemRows.push(row);
   }
 
   return `
