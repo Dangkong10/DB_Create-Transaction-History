@@ -352,11 +352,15 @@ export default function HomeScreen() {
 
       // 각 품목을 개별 거래로 로컬에 저장 → 큐에 추가 → 온라인이면 자동 동기화
       for (const item of items) {
+        // 품목을 자동완성으로 선택하지 않고 직접 타이핑하면 unitPrice 가 비어
+        // null 로 저장돼 반품/집계 금액이 0원 처리되는 사고가 있었다 (8/13 뜨개퀸 프라하).
+        // 저장 직전에 이름을 trim 하고 단가를 한 번 더 조회해 채운다.
+        const productName = item.productName.trim();
         await saveTransactionOffline({
           customerName: selectedCustomer.name,
-          productName: item.productName,
+          productName,
           quantity: isCancellation ? -Math.abs(item.quantity) : item.quantity,
-          unitPrice: item.unitPrice,
+          unitPrice: item.unitPrice ?? resolveItemUnitPrice(selectedCustomer.name, productName),
           date: dateStr,
         });
       }
