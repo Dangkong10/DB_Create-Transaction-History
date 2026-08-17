@@ -206,6 +206,26 @@ export default function DepositInputScreen() {
     }
   }, []);
 
+  /**
+   * 못 찾은 입금 알림 숨기기 — ignored 로 바꿔 다음부터 목록에 뜨지 않는다.
+   * 앱에서 되돌리는 화면이 없으므로 (DB 에서만 복구 가능) 한 번 확인을 받는다.
+   */
+  function handleHideUnmatched(a: BankAlert) {
+    showConfirm({
+      title: '이 입금 알림 숨기기',
+      message:
+        `${a.senderName || '(이름없음)'} — ${formatNumber(a.amount)}원\n\n` +
+        `앞으로 이 입금은 목록에 표시하지 않습니다.`,
+      confirmText: '표시 안 함',
+      cancelText: '취소',
+      onConfirm: () => {
+        void setAlertStatus([a.id], 'ignored')
+          .then(() => setUnmatchedAlerts((prev) => prev.filter((x) => x.id !== a.id)))
+          .catch(() => showToastRef.current('숨기기에 실패했습니다.', 'error'));
+      },
+    });
+  }
+
   /** effectiveDate 기준으로 미수 거래처 재로드 */
   const reloadPending = useCallback(async () => {
     try {
@@ -939,9 +959,19 @@ export default function DepositInputScreen() {
                     거래처를 찾지 못한 입금 {unmatchedAlerts.length}건
                   </Text>
                   {unmatchedAlerts.map((a) => (
-                    <Text key={a.id} style={{ fontSize: 12, color: '#92400e', marginTop: 6 }}>
-                      · {a.senderName || '(이름없음)'} — {formatNumber(a.amount)}원
-                    </Text>
+                    <View key={a.id} style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6 }}>
+                      <Text style={{ flex: 1, fontSize: 12, color: '#92400e' }}>
+                        · {a.senderName || '(이름없음)'} — {formatNumber(a.amount)}원
+                      </Text>
+                      <TouchableOpacity
+                        onPress={() => handleHideUnmatched(a)}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        style={{ paddingHorizontal: 6 }}
+                        accessibilityLabel="이 입금 알림 숨기기"
+                      >
+                        <Text style={{ fontSize: 13, color: '#a16207', fontWeight: '700' }}>✕</Text>
+                      </TouchableOpacity>
+                    </View>
                   ))}
                   <Text style={{ fontSize: 11, color: '#a16207', marginTop: 8, lineHeight: 16 }}>
                     거래처 것이라면 관리 탭 → 거래처 설정에서 입금자명을 등록해 주세요.
