@@ -3,7 +3,7 @@ import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { usePathname, useRouter } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { useConfirm } from '@/lib/confirm-provider';
-import { getPendingSyncCount, clearPendingSync } from '@/lib/syncQueueCleaner';
+import { getPendingSyncCount } from '@/lib/syncQueueCleaner';
 import { wipeAllLocalData } from '@/lib/dataWiper';
 import { SessionExpiredToast } from './SessionExpiredToast';
 
@@ -43,23 +43,22 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
     try {
       const pending = await getPendingSyncCount();
 
+      // 로그아웃만으로는 로컬을 절대 지우지 않는다. 미전송 건은 IndexedDB 에 남아
+      // 같은 계정으로 재로그인하면 syncQueue 가 그대로 전송된다.
+      // (다른 계정으로 로그인하는 경우의 소거는 아래 onAuthStateChange 가 담당)
       if (pending > 0) {
         showConfirm({
           title: '로그인 만료',
-          message: `로그인이 만료되어 동기화되지 않은 ${pending}건의 내용이 있습니다.\n이 내용은 저장되지 않습니다. 계속하시겠습니까?`,
-          confirmText: '로그인 화면으로',
-          cancelText: '앱 유지',
-          onConfirm: async () => {
-            await Promise.all([clearPendingSync(), wipeAllLocalData()]);
-            goToLogin();
-          },
+          message: `로그인이 만료되어 아직 전송되지 않은 ${pending}건이 있습니다.\n이 내용은 기기에 안전하게 남아 있으며, 다시 로그인하면 이어서 전송됩니다.`,
+          confirmText: '지금 로그인',
+          cancelText: '나중에',
+          onConfirm: goToLogin,
           onCancel: () => {
             setStaleSession(true);
           },
         });
       } else {
         setShowToast(true);
-        wipeAllLocalData().catch((err) => console.error('[AuthGuard] wipe 실패:', err));
         router.replace('/login');
       }
     } finally {
@@ -73,6 +72,12 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
       const { data: { session } } = await supabase.auth.getSession();
       if (cancelled) return;
       if (!session && !isOnAuthRoute(pathnameRef.current)) {
+        if (typeof navigator !== 'undefined' && !navigator.onLine) {
+          // 오프라인이라 토큰 갱신을 못 한 것일 뿐 — 로그인 화면으로 밀어내면
+          // 오프라인 입력 자체가 불가능해진다. 배너만 띄우고 앱은 유지.
+          setStaleSession(true);
+          return;
+        }
         router.replace('/login');
       }
     })();
@@ -116,7 +121,13 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
       if (document.visibilityState !== 'visible') return;
       if (isOnAuthRoute(pathnameRef.current)) return;
       const { data: { session } } = await supabase.auth.getSession();
-      if (!session) handleSignedOut();
+      if (session) return;
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        // 절전에서 깨어나 와이파이가 붙기 전 — 진짜 로그아웃이 아니다.
+        setStaleSession(true);
+        return;
+      }
+      handleSignedOut();
     };
     document.addEventListener('visibilitychange', onVisible);
     return () => document.removeEventListener('visibilitychange', onVisible);

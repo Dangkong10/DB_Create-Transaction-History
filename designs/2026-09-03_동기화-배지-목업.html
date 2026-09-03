@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>동기화 배지 · 로그인 만료 팝업 목업</title>
+<style>
+  body{margin:0;background:#FAFAF7;color:#1a1a1a;font:15px/1.6 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo",sans-serif}
+  .wrap{max-width:820px;margin:0 auto;padding:32px 20px 64px}
+  h1{font-size:20px;margin:0 0 4px}
+  .sub{color:#6b6b6b;font-size:13px;margin:0 0 32px}
+  h2{font-size:15px;margin:32px 0 12px;padding-bottom:8px;border-bottom:1px solid #e5e3dc}
+  .row{display:flex;align-items:center;gap:14px;padding:10px 0;flex-wrap:wrap}
+  .cap{font-size:12px;color:#6b6b6b;min-width:120px}
+  .badge{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:20px;
+    box-shadow:0 1px 4px rgba(0,0,0,.1);font-size:12px;font-weight:600}
+  .dot{width:8px;height:8px;border-radius:4px;display:block}
+  .new{outline:2px dashed #1B365D;outline-offset:3px}
+  .tag{font-size:11px;font-weight:700;letter-spacing:.04em;padding:2px 7px;border-radius:4px}
+  .tag.now{background:#eee;color:#666}
+  .tag.fix{background:#1B365D;color:#fff}
+  .note{font-size:12px;color:#6b6b6b;margin:6px 0 0 134px}
+  .dlg{border:1px solid #e5e3dc;border-radius:12px;background:#fff;padding:20px;max-width:420px;margin:12px 0}
+  .dlg h3{margin:0 0 10px;font-size:16px}
+  .dlg p{margin:0 0 18px;font-size:14px;color:#333;white-space:pre-line}
+  .btns{display:flex;gap:8px;justify-content:flex-end}
+  .btn{padding:9px 16px;border-radius:8px;font-size:13px;font-weight:600;border:1px solid #d8d5cc;background:#fff;color:#333}
+  .btn.primary{background:#1B365D;color:#fff;border-color:#1B365D}
+  .btn.danger{background:#fff;color:#991B1B;border-color:#f3c8c8}
+  .x{color:#991B1B;font-weight:700}
+  .o{color:#166534;font-weight:700}
+</style></head><body><div class="wrap">
+
+<h1>동기화 배지 · 로그인 만료 팝업 — 수정 전/후</h1>
+<p class="sub">2026-09-03 · 설계서 <code>2026-09-03_동기화-대기-고착.md</code> 목업</p>
+
+<h2>1. 배지 상태 (현재 유지)</h2>
+<div class="row"><span class="cap">오프라인</span>
+  <span class="badge" style="background:#FFF7ED;color:#92400E"><i class="dot" style="background:#F59E0B"></i>오프라인 — 3건 동기화 대기 중</span>
+  <span class="tag now">그대로</span></div>
+<div class="row"><span class="cap">전송 중</span>
+  <span class="badge" style="background:#EDF1F7;color:#0F2340"><i class="dot" style="background:#1B365D"></i>동기화 중...</span>
+  <span class="tag now">그대로</span></div>
+<div class="row"><span class="cap">완료</span>
+  <span class="badge" style="background:#F0FDF4;color:#166534"><i class="dot" style="background:#22C55E"></i>동기화 완료</span>
+  <span class="tag now">그대로</span></div>
+
+<h2>2. 문제의 상태 — 세션 만료</h2>
+<div class="row"><span class="cap">수정 전</span>
+  <span class="badge" style="background:#EDF1F7;color:#0F2340"><i class="dot" style="background:#1B365D"></i>3건 동기화 대기 중</span>
+  <span class="tag now">AS-IS</span></div>
+<p class="note"><span class="x">문제</span> — 온라인인데도 영원히 이 상태. 원인도, 사용자가 할 일도 안 보임.</p>
+
+<div class="row"><span class="cap">수정 후</span>
+  <span class="badge new" style="background:#FEF2F2;color:#991B1B"><i class="dot" style="background:#e74c3c"></i>로그인 필요 — 3건 미전송</span>
+  <span class="tag fix">TO-BE</span></div>
+<p class="note"><span class="o">해결</span> — 원인이 드러나고, <b>탭하면 재시도 / 로그인 화면</b>으로. 데이터는 기기에 그대로 남아 있음.</p>
+
+<h2>3. "로그인 만료" 팝업</h2>
+<div style="display:flex;gap:20px;flex-wrap:wrap">
+  <div>
+    <span class="tag now">AS-IS</span>
+    <div class="dlg">
+      <h3>로그인 만료</h3>
+      <p>로그인이 만료되어 동기화되지 않은 3건의 내용이 있습니다.
+이 내용은 저장되지 않습니다. 계속하시겠습니까?</p>
+      <div class="btns">
+        <button class="btn">앱 유지</button>
+        <button class="btn danger">로그인 화면으로</button>
+      </div>
+    </div>
+    <p class="note" style="margin-left:0"><span class="x">이 버튼이 3건을 영구 삭제</span> (clearPendingSync + wipeAllLocalData)</p>
+  </div>
+  <div>
+    <span class="tag fix">TO-BE</span>
+    <div class="dlg">
+      <h3>로그인 만료</h3>
+      <p>로그인이 만료되어 아직 전송되지 않은 3건이 있습니다.
+이 내용은 기기에 안전하게 남아 있으며, 다시 로그인하면 이어서 전송됩니다.</p>
+      <div class="btns">
+        <button class="btn">나중에</button>
+        <button class="btn primary">지금 로그인</button>
+      </div>
+    </div>
+    <p class="note" style="margin-left:0"><span class="o">어느 버튼을 눌러도 데이터는 지워지지 않음</span></p>
+  </div>
+</div>
+
+</div></body></html>

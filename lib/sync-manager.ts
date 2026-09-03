@@ -7,6 +7,7 @@ export type SyncState =
   | 'idle'          // 동기화 완료 상태
   | 'syncing'       // 동기화 진행 중
   | 'offline'       // 오프라인
+  | 'auth'          // 로그인 만료 — 큐는 보존, 재로그인하면 이어서 전송
   | 'error';        // 동기화 실패
 
 export interface SyncStatus {
@@ -21,6 +22,9 @@ type SyncListener = (status: SyncStatus) => void;
 
 const MAX_RETRY = 5;
 let isSyncing = false;
+// 세션이 없어 큐를 못 비운 상태. 이걸 안 남기면 배지가 '대기 중'으로만 보여서
+// 사용자가 원인(재로그인 필요)을 알 방법이 없다.
+let authRequired = false;
 const listeners = new Set<SyncListener>();
 
 function isOnline(): boolean {
@@ -39,6 +43,8 @@ async function emitStatus(): Promise<void> {
     state = 'offline';
   } else if (isSyncing) {
     state = 'syncing';
+  } else if (authRequired && pendingCount > 0) {
+    state = 'auth';
   } else if (pendingCount > 0) {
     const allQueue = await db.syncQueue.getAll();
     const hasMaxRetry = allQueue.some(item => item.retryCount >= MAX_RETRY);
@@ -189,7 +195,12 @@ export async function processSyncQueue(): Promise<void> {
 
   try {
     const session = await getSession();
-    if (!session) return;
+    if (!session) {
+      // 큐는 절대 건드리지 않는다. 재로그인하면 그대로 이어서 전송된다.
+      authRequired = true;
+      return;
+    }
+    authRequired = false;
 
     const queue = await db.syncQueue.getAll(); // createdAt 인덱스 순으로 정렬됨
 

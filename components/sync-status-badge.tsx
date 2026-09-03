@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { View, Text, Animated, Platform } from 'react-native';
+import { View, Text, Animated, Platform, Pressable } from 'react-native';
 import { useSync } from '@/hooks/use-sync';
 
 /**
@@ -8,10 +8,11 @@ import { useSync } from '@/hooks/use-sync';
  * - 동기화 완료: 초록색 점 + "동기화 완료" (2초 후 자동 숨김)
  * - 동기화 중: teal 점 + "동기화 중..." + 회전 애니메이션
  * - 오프라인: 주황색 점 + "오프라인" + 대기 건수
+ * - 로그인 만료: 빨간색 점 + "로그인 필요 — N건 미전송" (탭하면 재시도)
  * - 실패: 빨간색 점 + "동기화 실패"
  */
 export function SyncStatusBadge() {
-  const { syncStatus, isOnline } = useSync();
+  const { syncStatus, isOnline, manualSync } = useSync();
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
   // 동기화 중일 때 점 깜빡임 애니메이션
@@ -38,7 +39,10 @@ export function SyncStatusBadge() {
   const config = getConfig(syncStatus.state, syncStatus.pendingCount, isOnline);
 
   return (
-    <View
+    <Pressable
+      onPress={manualSync}
+      accessibilityRole="button"
+      accessibilityLabel={config.label}
       style={{
         flexDirection: 'row',
         alignItems: 'center',
@@ -65,7 +69,7 @@ export function SyncStatusBadge() {
       <Text style={{ fontSize: 12, color: config.textColor, fontWeight: '600' }}>
         {config.label}
       </Text>
-    </View>
+    </Pressable>
   );
 }
 
@@ -91,6 +95,15 @@ function getConfig(
       bgColor: '#EDF1F7',
       textColor: '#0F2340',
       label: '동기화 중...',
+    };
+  }
+
+  if (state === 'auth') {
+    return {
+      dotColor: '#e74c3c',
+      bgColor: '#FEF2F2',
+      textColor: '#991B1B',
+      label: `로그인 필요 — ${pendingCount}건 미전송`,
     };
   }
 
